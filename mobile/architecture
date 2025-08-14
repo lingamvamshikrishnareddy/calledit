@@ -1,0 +1,87 @@
+called-it/
+├── mobile/                          # React Native Frontend
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── common/
+│   │   │   │   ├── Button.jsx
+│   │   │   │   ├── Card.jsx
+│   │   │   │   ├── Avatar.jsx
+│   │   │   │   └── TabBar.jsx
+│   │   │   ├── feed/
+│   │   │   │   ├── PredictionCard.jsx
+│   │   │   │   ├── FeedItem.jsx
+│   │   │   │   └── VoteButtons.jsx
+│   │   │   ├── leaderboard/
+│   │   │   │   ├── LeaderboardItem.jsx
+│   │   │   │   └── StatsCard.jsx
+│   │   │   └── profile/
+│   │   │       ├── ProfileHeader.jsx
+│   │   │       ├── StreakBadge.jsx
+│   │   │       └── ActivityFeed.jsx
+                |--FriendCard.jsx
+│   │   ├── screens/
+│   │   │   ├── HomeScreen.jsx
+│   │   │   ├── LeaderboardScreen.jsx
+│   │   │   ├── PortfolioScreen.jsx
+│   │   │   ├── FriendsScreen.jsx
+│   │   │   └── AuthScreen.jsx
+            |-- EventsScreen.jsx 
+            |--PredictionDetails.jsx
+            -- CreatePrediction.jsx
+│   │   ├── services/
+│   │   │   ├── api.js
+│   │   │   ├── auth.js
+│   │   │   
+│   │   ├── navigation/
+│   │   │   └── AppNavigator.jsx
+│   │   ├── hooks/
+│   │   │   ├── usePredictions.js
+│   │   │   ├── useLeaderboard.js
+│   │   │   └── useAuth.js
+            ---useUser.js 
+            ----useVotes.js
+│   │   └── types/
+│   │       └── index.js
+│   ├── package.json
+│   ├── app.json
+│   └── App.jsx
+│
+├── backend/                         # FastAPI Backend
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── models/
+│   │   │   ├── __init__.py
+│   │   │   ├── user.py
+│   │   │   ├── prediction.py
+│   │   │   ├── vote.py
+│   │   │   └── leaderboard.py
+│   │   ├── routers/
+│   │   │   ├── __init__.py
+│   │   │   ├── auth.py
+│   │   │   ├── predictions.py
+│   │   │   ├── users.py
+│   │   │   ├── votes.py
+│   │   │   └── leaderboard.py
+│   │   ├── services/
+│   │   │   ├── __init__.py
+│   │   │   ├── auth_service.py
+│   │   │   ├── prediction_service.py
+│   │   │   ├── vote_service.py
+│   │   │   └── leaderboard_service.py
+│   │   ├── database/
+│   │   │   ├── __init__.py
+│   │   │   ├── connection.py
+│   │   │   └── migrations/
+│   │   └── utils/
+│   │       ├── __init__.py
+│   │       ├── security.py
+│   │       └── helpers.py
+│   ├── requirements.txt
+│   └── .env
+│
+└── database/                        # Supabase Schema
+    ├── schema.sql
+    ├── seed_data.sql
+    └── functions/
+        ├── calculate_leaderboard.sql
+        └── update_user_stats.sql

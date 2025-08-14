@@ -1,0 +1,77 @@
+# Updated Project Structure with Controllers
+
+```
+calledit-api/
+├── app/
+│   ├── __init__.py
+│   ├── main.py                    # FastAPI app entry point
+│   ├── config/
+│   │   ├── __init__.py
+│   │   ├── database.py           # Database configuration (updated)
+│   │   └── jwt_config.py         # JWT configuration
+│   ├── database/
+│   │   ├── __init__.py
+│   │   └── connection.py         # Database connection and dependencies
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── user.py               # User model
+│   │   ├── prediction.py         # Prediction and Category models
+│   │   ├── vote.py               # Vote model
+│   │   └── leaderboard.py        # Leaderboard model
+│   ├── controllers/              # New directory for CRUD controllers
+│   │   ├── __init__.py
+│   │   ├── user_controller.py    # User CRUD operations
+│   │   ├── auth_controller.py    # Authentication operations
+│   │   ├── prediction_controller.py  # Prediction CRUD operations
+│   │   ├── category_controller.py    # Category CRUD operations
+│   │   ├── vote_controller.py    # Vote CRUD operations
+│   │   └── leaderboard_controller.py # Leaderboard operations
+│   ├── routers/
+│   │   ├── __init__.py
+│   │   ├── auth.py               # Authentication endpoints (updated)
+│   │   ├── predictions.py        # Prediction endpoints (updated)
+│   │   ├── users.py              # User endpoints (updated)
+│   │   ├── votes.py              # Vote endpoints (updated)
+│   │   └── leaderboard.py        # Leaderboard endpoints (updated)
+│   ├── services/                 # Business logic layer
+│   │   ├── __init__.py
+│   │   ├── auth_service.py       # Authentication business logic (updated)
+│   │   ├── prediction_service.py # Prediction business logic (updated)
+│   │   ├── vote_service.py       # Vote business logic (updated)
+│   │   └── leaderboard_service.py # Leaderboard business logic (updated)
+│   ├── utils/                    # New directory for utilities
+│   │   ├── __init__.py
+│   │   ├── password_utils.py     # Password hashing utilities
+│   │   └── jwt_utils.py          # JWT token utilities
+│   └── tasks/
+│       ├── __init__.py
+│       └── background_tasks.py   # Background task functions
+├── alembic/
+│   ├── versions/
+│   ├── env.py
+│   └── script.py.mako
+├── .env                          # Environment variables (updated)
+├── .gitignore
+├── alembic.ini                   # Alembic configuration
+├── requirements.txt              # Python dependencies (updated)
+└── README.md
+```
+
+## Key Changes:
+
+1. **New `controllers/` directory**: Houses all CRUD operations for direct PostgreSQL interaction
+2. **New `utils/` directory**: Contains password hashing and JWT utilities
+3. **Updated configuration**: Removed Supabase dependency, added JWT configuration
+4. **Simplified services**: Now use controllers instead of Supabase client
+5. **Updated dependencies**: Removed Supabase, added JWT and password hashing libraries
+
+## Architecture Flow:
+
+```
+Router → Service → Controller → Database
+```
+
+- **Routers**: Handle HTTP requests and responses
+- **Services**: Business logic and validation
+- **Controllers**: Direct database CRUD operations
+- **Models**: SQLAlchemy ORM models
