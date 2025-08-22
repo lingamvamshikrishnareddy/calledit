@@ -1,5 +1,5 @@
-// src/screens/AuthScreen.jsx - Fixed Auth Screen
-import React, { useState } from 'react';
+// src/screens/AuthScreen.jsx - Updated for App Navigator Integration
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,17 +11,41 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import ApiService from '../services/api';
+import { useAuth } from '../hooks/useAuth';
 
-const AuthScreen = ({ navigation }) => {
+const AuthScreen = () => {
+  const { login, register, testConnection, loading: authLoading } = useAuth();
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState(null);
   const [formData, setFormData] = useState({
     username: '',
     email: '',
     password: '',
     confirmPassword: '',
   });
+
+  // Test connection on component mount
+  useEffect(() => {
+    const checkConnection = async () => {
+      try {
+        const result = await testConnection();
+        setConnectionStatus(result);
+        if (result.status === 'failed') {
+          Alert.alert(
+            'Connection Error',
+            'Cannot connect to server. Please check if the backend is running.',
+            [{ text: 'OK' }]
+          );
+        }
+      } catch (error) {
+        console.error('Connection test failed:', error);
+        setConnectionStatus({ status: 'failed', error: error.message });
+      }
+    };
+    
+    checkConnection();
+  }, [testConnection]);
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -35,6 +59,11 @@ const AuthScreen = ({ navigation }) => {
 
     if (!isLogin && !formData.email.trim()) {
       Alert.alert('Error', 'Email is required');
+      return false;
+    }
+
+    if (!isLogin && !formData.email.includes('@')) {
+      Alert.alert('Error', 'Please enter a valid email address');
       return false;
     }
 
@@ -57,7 +86,7 @@ const AuthScreen = ({ navigation }) => {
   };
 
   const handleSubmit = async () => {
-    if (loading) return;
+    if (loading || authLoading) return;
 
     if (!validateForm()) return;
 
@@ -66,29 +95,27 @@ const AuthScreen = ({ navigation }) => {
     try {
       if (isLogin) {
         console.log('Attempting login with:', { username: formData.username });
-        const result = await ApiService.login({
+        const result = await login({
           username: formData.username,
           password: formData.password,
         });
         console.log('Login successful:', result);
-        Alert.alert('Success', 'Login successful!', [
-          { text: 'OK', onPress: () => navigation.goBack() }
-        ]);
+        // No need for Alert or navigation - the app will automatically navigate
+        // when isAuthenticated becomes true in useAuth
       } else {
         console.log('Attempting registration with:', { 
           username: formData.username, 
           email: formData.email 
         });
-        const result = await ApiService.register({
+        const result = await register({
           username: formData.username,
-          display_name: formData.username, // Use username as display name
+          display_name: formData.username,
           email: formData.email,
           password: formData.password,
         });
         console.log('Registration successful:', result);
-        Alert.alert('Success', 'Account created successfully!', [
-          { text: 'OK', onPress: () => navigation.goBack() }
-        ]);
+        // No need for Alert or navigation - the app will automatically navigate
+        // when isAuthenticated becomes true in useAuth
       }
     } catch (error) {
       console.error('Auth error:', error);
@@ -98,6 +125,20 @@ const AuthScreen = ({ navigation }) => {
     }
   };
 
+  const retryConnection = async () => {
+    setConnectionStatus(null);
+    const result = await testConnection();
+    setConnectionStatus(result);
+    
+    if (result.status === 'connected') {
+      Alert.alert('Success', 'Connected to server successfully!');
+    } else {
+      Alert.alert('Failed', 'Still cannot connect to server');
+    }
+  };
+
+  const isFormLoading = loading || authLoading;
+
   return (
     <View style={styles.container}>
       <LinearGradient
@@ -105,12 +146,23 @@ const AuthScreen = ({ navigation }) => {
         style={styles.gradient}
       >
         <View style={styles.header}>
-          <TouchableOpacity 
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Ionicons name="arrow-back" size={24} color="#fff" />
-          </TouchableOpacity>
+          {/* Connection Status Indicator */}
+          {connectionStatus && (
+            <View style={styles.connectionStatus}>
+              <View style={[
+                styles.statusIndicator, 
+                { backgroundColor: connectionStatus.status === 'connected' ? '#4CAF50' : '#f44336' }
+              ]} />
+              <Text style={styles.statusText}>
+                {connectionStatus.status === 'connected' ? 'Connected' : 'Disconnected'}
+              </Text>
+              {connectionStatus.status === 'failed' && (
+                <TouchableOpacity onPress={retryConnection} style={styles.retryButton}>
+                  <Ionicons name="refresh" size={16} color="#fff" />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
           
           <View style={styles.headerContent}>
             <Text style={styles.title}>
@@ -136,6 +188,7 @@ const AuthScreen = ({ navigation }) => {
               onChangeText={(value) => handleInputChange('username', value)}
               autoCapitalize="none"
               autoCorrect={false}
+              editable={!isFormLoading}
             />
           </View>
 
@@ -151,6 +204,7 @@ const AuthScreen = ({ navigation }) => {
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoCorrect={false}
+                editable={!isFormLoading}
               />
             </View>
           )}
@@ -164,6 +218,7 @@ const AuthScreen = ({ navigation }) => {
               value={formData.password}
               onChangeText={(value) => handleInputChange('password', value)}
               secureTextEntry
+              editable={!isFormLoading}
             />
           </View>
 
@@ -177,16 +232,20 @@ const AuthScreen = ({ navigation }) => {
                 value={formData.confirmPassword}
                 onChangeText={(value) => handleInputChange('confirmPassword', value)}
                 secureTextEntry
+                editable={!isFormLoading}
               />
             </View>
           )}
 
           <TouchableOpacity
-            style={[styles.submitButton, loading && styles.submitButtonDisabled]}
+            style={[
+              styles.submitButton, 
+              (isFormLoading || connectionStatus?.status === 'failed') && styles.submitButtonDisabled
+            ]}
             onPress={handleSubmit}
-            disabled={loading}
+            disabled={isFormLoading || connectionStatus?.status === 'failed'}
           >
-            {loading ? (
+            {isFormLoading ? (
               <ActivityIndicator size="small" color="#000" />
             ) : (
               <Text style={styles.submitButtonText}>
@@ -207,6 +266,7 @@ const AuthScreen = ({ navigation }) => {
                 confirmPassword: '',
               });
             }}
+            disabled={isFormLoading}
           >
             <Text style={styles.switchText}>
               {isLogin 
@@ -221,6 +281,11 @@ const AuthScreen = ({ navigation }) => {
           <Text style={styles.footerText}>
             🎯 Join thousands making predictions and winning bragging rights!
           </Text>
+          {connectionStatus?.status === 'failed' && (
+            <Text style={styles.errorText}>
+              ⚠️ Server connection failed. Check if backend is running.
+            </Text>
+          )}
         </View>
       </LinearGradient>
     </View>
@@ -239,9 +304,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 40,
   },
-  backButton: {
-    alignSelf: 'flex-start',
+  connectionStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 20,
+    alignSelf: 'center',
+  },
+  statusIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  statusText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    marginRight: 8,
+  },
+  retryButton: {
+    padding: 4,
   },
   headerContent: {
     alignItems: 'center',
@@ -296,7 +383,7 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   submitButtonDisabled: {
-    opacity: 0.7,
+    opacity: 0.5,
   },
   submitButtonText: {
     fontSize: 18,
@@ -322,6 +409,13 @@ const styles = StyleSheet.create({
     color: '#ccc',
     textAlign: 'center',
     lineHeight: 20,
+  },
+  errorText: {
+    fontSize: 12,
+    color: '#f44336',
+    textAlign: 'center',
+    marginTop: 10,
+    lineHeight: 18,
   },
 });
 

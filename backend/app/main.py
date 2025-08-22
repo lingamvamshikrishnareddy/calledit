@@ -1,5 +1,4 @@
-# app/main.py
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
@@ -8,58 +7,51 @@ import uvicorn
 import os
 from datetime import datetime
 
+# Import database and config
 from .database.connection import engine, Base
-
-# Import JWT config instead of Supabase
 from .config.jwt_config import jwt_config
 
+# Routers - Updated imports to match the structure you want
 from .routers import (
-    auth as auth_router,
-    predictions as predictions_router,
-    users as users_router,
-    votes as votes_router,
-    leaderboard as leaderboard_router
+    auth,
+    predictions, 
+    votes,
+    users,
+    leaderboard
 )
 
-# Create database tables
+# Lifespan for startup/shutdown tasks
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     try:
         print("🚀 Starting CalledIt API...")
-        
-        # Create all database tables
+
+        # Create DB tables
         print("📊 Creating database tables...")
         Base.metadata.create_all(bind=engine)
-        print("✅ Database tables created")
-        
-        # Test JWT configuration
+        print("✅ Database tables created successfully!")
+
+        # Test JWT config
         print("🔐 Testing JWT configuration...")
         try:
-            # Test JWT token creation and verification
             test_data = {"sub": "test", "email": "test@example.com"}
-            test_token = jwt_config.create_access_token(test_data)
-            decoded = jwt_config.verify_access_token(test_token)
+            token = jwt_config.create_access_token(test_data)
+            jwt_config.verify_access_token(token)
             print("✅ JWT configuration working")
         except Exception as jwt_error:
-            print(f"⚠️  JWT configuration warning: {jwt_error}")
-            print("   Authentication may not work properly")
-        
-        print("🚀 CalledIt API startup complete")
-        
+            print(f"⚠️ JWT configuration warning: {jwt_error}")
+
+        print("✅ Startup complete")
     except Exception as e:
         print(f"❌ Critical startup error: {e}")
-        # Don't raise - let the app start anyway for debugging
-        print("   Starting in degraded mode...")
-    
-    yield
-    
-    # Shutdown
-    print("🛑 CalledIt API shutting down")
+        print("Starting in degraded mode...")
 
-# Initialize FastAPI app
+    yield
+    print("🛑 API shutting down")
+
+# FastAPI app - Updated with simplified title
 app = FastAPI(
-    title="CalledIt API",
+    title="Predictions API",
     description="Social prediction app for Gen Z - Call what happens next! 🔮",
     version="1.0.0",
     lifespan=lifespan,
@@ -67,58 +59,50 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS Configuration
+# CORS Configuration - Updated to allow all origins for development
 allowed_origins = [
-    "http://localhost:3000",  # React development server
-    "http://localhost:3001",  # Alternative React port
-    "http://127.0.0.1:3000",  # Alternative localhost
-    "https://your-frontend-domain.com",  # Production frontend
+    "http://localhost:3000",
+    "http://localhost:3001", 
+    "http://127.0.0.1:3000",
+    "http://10.0.2.2:8000",  # Android emulator
+    "https://your-frontend-domain.com"
 ]
-
 if os.getenv("ENVIRONMENT") == "development":
-    allowed_origins.append("*")
+    allowed_origins = ["*"]  # Allow all origins in development
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Simplified to allow all methods
+    allow_headers=["*"],  # Simplified to allow all headers
 )
 
-# Trusted host middleware for security
+# Trusted hosts middleware
 trusted_hosts = ["*"] if os.getenv("ENVIRONMENT") == "development" else [
     "localhost",
-    "127.0.0.1",
+    "127.0.0.1", 
+    "10.0.2.2",  # Android emulator
     "your-api-domain.com"
 ]
-
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=trusted_hosts
 )
 
-# Health check endpoints
-@app.get("/")
-async def root():
-    return {
-        "message": "CalledIt API is running! 🚀",
-        "version": "1.0.0",
-        "status": "healthy",
-        "docs": "/docs",
-        "timestamp": datetime.utcnow().isoformat(),
-        "auth_system": "JWT + PostgreSQL"
-    }
-
+# Health check endpoint - Updated to match the simpler structure
 @app.get("/health")
 async def health_check():
+    """API Health check endpoint"""
     health_status = {
-        "status": "healthy",
+        "status": "ok",
+        "message": "Predictions API is running",
+        "version": "1.0.0",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {}
     }
-    
-    # Test database connection
+
+    # Database connectivity check
     try:
         with engine.connect() as conn:
             conn.execute("SELECT 1")
@@ -126,50 +110,51 @@ async def health_check():
     except Exception as e:
         health_status["services"]["database"] = f"error: {str(e)}"
         health_status["status"] = "degraded"
-    
-    # Test JWT configuration
+
+    # JWT configuration check
     try:
         test_data = {"sub": "health_check", "test": True}
-        test_token = jwt_config.create_access_token(test_data)
-        jwt_config.verify_access_token(test_token)
+        token = jwt_config.create_access_token(test_data)
+        jwt_config.verify_access_token(token)
         health_status["services"]["jwt_auth"] = "working"
     except Exception as e:
         health_status["services"]["jwt_auth"] = f"error: {str(e)}"
         health_status["status"] = "degraded"
-    
+
     return health_status
 
-# API Info endpoint
-@app.get("/api/info")
-async def api_info():
+# Register routers - MAKE SURE votes router is included
+app.include_router(auth.router)
+app.include_router(predictions.router)
+app.include_router(votes.router)  # CRITICAL: This line must be present
+app.include_router(users.router)
+app.include_router(leaderboard.router)
+
+# Debug endpoint to list all routes
+@app.get("/routes")
+async def list_routes():
+    """Debug endpoint to list all available routes"""
+    routes = []
+    for route in app.routes:
+        if hasattr(route, 'methods') and hasattr(route, 'path'):
+            routes.append({
+                "path": route.path,
+                "methods": list(route.methods)
+            })
+    return {"routes": routes}
+
+# Root endpoint - Optional, can be removed if not needed
+@app.get("/")
+async def root():
     return {
-        "name": "CalledIt API",
+        "message": "Predictions API is running! 🚀",
         "version": "1.0.0",
-        "description": "Social prediction platform API",
-        "environment": os.getenv("ENVIRONMENT", "production"),
-        "authentication": "JWT + PostgreSQL",
-        "database": "PostgreSQL + SQLAlchemy",
-        "endpoints": {
-            "auth": "/api/auth",
-            "predictions": "/api/predictions",
-            "users": "/api/users",
-            "votes": "/api/votes",
-            "leaderboard": "/api/leaderboard"
-        },
-        "docs": {
-            "swagger": "/docs",
-            "redoc": "/redoc"
-        }
+        "status": "healthy",
+        "docs": "/docs",
+        "timestamp": datetime.utcnow().isoformat()
     }
 
-# Include routers with API prefix
-app.include_router(auth_router.router, prefix="/api")
-app.include_router(predictions_router.router, prefix="/api")
-app.include_router(users_router.router, prefix="/api")
-app.include_router(votes_router.router, prefix="/api")
-app.include_router(leaderboard_router.router, prefix="/api")
-
-# Global exception handlers
+# Exception handlers
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
     return JSONResponse(
@@ -181,12 +166,12 @@ async def not_found_handler(request: Request, exc):
         }
     )
 
-@app.exception_handler(500)
+@app.exception_handler(500) 
 async def internal_error_handler(request: Request, exc):
     return JSONResponse(
         status_code=500,
         content={
-            "error": "Internal server error",
+            "error": "Internal server error", 
             "message": "An unexpected error occurred",
             "timestamp": datetime.utcnow().isoformat()
         }
@@ -205,7 +190,7 @@ async def validation_error_handler(request: Request, exc):
 
 if __name__ == "__main__":
     uvicorn.run(
-        "app.main:app",
+        app,  # Simplified - directly pass app instead of string
         host="0.0.0.0",
         port=int(os.getenv("PORT", 8000)),
         reload=os.getenv("ENVIRONMENT") == "development",

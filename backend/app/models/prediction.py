@@ -72,6 +72,7 @@ class Prediction(Base):
     # Points and rewards
     points_pool = Column(Integer, default=100)  # Total points available
     base_points = Column(Integer, default=10)   # Base points per correct vote
+    points_awarded = Column(Integer, default=0)  # Total points awarded after resolution
     
     # Important timestamps
     closes_at = Column(DateTime(timezone=True), nullable=False)  # When voting closes
@@ -92,6 +93,8 @@ class Prediction(Base):
         Index('idx_predictions_creator', 'created_by'),
         Index('idx_predictions_closes_at', 'closes_at'),
         Index('idx_predictions_created_at', 'created_at'),
+        Index('idx_predictions_total_votes', 'total_votes'),  # For trending predictions
+        Index('idx_predictions_resolution', 'resolution'),    # For resolved predictions
     )
     
     def __repr__(self):
@@ -103,9 +106,19 @@ class Prediction(Base):
         return self.status == PredictionStatus.ACTIVE.value
     
     @property
+    def is_closed(self):
+        """Check if prediction voting has closed"""
+        return self.status == PredictionStatus.CLOSED.value
+    
+    @property
     def is_resolved(self):
         """Check if prediction has been resolved"""
         return self.status == PredictionStatus.RESOLVED.value
+    
+    @property
+    def is_cancelled(self):
+        """Check if prediction has been cancelled"""
+        return self.status == PredictionStatus.CANCELLED.value
     
     @property
     def yes_percentage(self):
@@ -120,3 +133,45 @@ class Prediction(Base):
         if self.total_votes == 0:
             return 50.0
         return round((self.no_votes / self.total_votes) * 100, 1)
+    
+    @property
+    def is_expired(self):
+        """Check if prediction has expired (past closing time)"""
+        from datetime import datetime
+        return self.closes_at <= datetime.utcnow()
+    
+    @property
+    def time_remaining(self):
+        """Get time remaining until closing (returns timedelta or None if expired)"""
+        from datetime import datetime
+        if self.is_expired:
+            return None
+        return self.closes_at - datetime.utcnow()
+    
+    @property
+    def winning_side(self):
+        """Get the winning side based on resolution"""
+        if not self.is_resolved:
+            return None
+        return "yes" if self.resolution else "no"
+    
+    @property
+    def losing_side(self):
+        """Get the losing side based on resolution"""
+        if not self.is_resolved:
+            return None
+        return "no" if self.resolution else "yes"
+    
+    @property
+    def winning_votes(self):
+        """Get number of winning votes"""
+        if not self.is_resolved:
+            return None
+        return self.yes_votes if self.resolution else self.no_votes
+    
+    @property
+    def losing_votes(self):
+        """Get number of losing votes"""
+        if not self.is_resolved:
+            return None
+        return self.no_votes if self.resolution else self.yes_votes

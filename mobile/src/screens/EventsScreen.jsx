@@ -1,4 +1,4 @@
-// src/screens/EventsScreen.jsx
+// src/screens/EventsScreen.jsx - FIXED
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -11,17 +11,21 @@ import {
   RefreshControl,
   ActivityIndicator,
   Dimensions,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import PredictionCard from '../components/feed/PredictionCard';
 import ApiService from '../services/api';
 import AuthService from '../services/auth';
+import { useAuth } from '../hooks/useAuth'; // ADDED: Use auth hook
 
 const { width } = Dimensions.get('window');
 
 const EventsScreen = ({ navigation }) => {
-  const [user, setUser] = useState(AuthService.getCurrentUser());
+  // FIXED: Use auth hook instead of direct AuthService calls
+  const { user, isAuthenticated, loading: authLoading } = useAuth();
+  
   const [searchQuery, setSearchQuery] = useState('');
   const [predictions, setPredictions] = useState([]);
   const [filteredPredictions, setFilteredPredictions] = useState([]);
@@ -31,135 +35,112 @@ const EventsScreen = ({ navigation }) => {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
-  // Mock categories for Gen Z content
-  const mockCategories = [
-    { id: 'all', name: '🌟 All', icon: 'star' },
-    { id: 'pop_culture', name: '🎭 Pop Culture', icon: 'musical-notes' },
-    { id: 'sports', name: '⚽ Sports', icon: 'football' },
-    { id: 'entertainment', name: '🎬 TV & Movies', icon: 'tv' },
-    { id: 'social_media', name: '📱 Social Drama', icon: 'phone-portrait' },
-    { id: 'trending', name: '🔥 Viral', icon: 'flame' },
-  ];
-
-  // Mock predictions for demo (replace with real API data)
-  const mockPredictions = [
-    {
-      id: 1,
-      title: "Will Taylor Swift announce a new album at the Grammys?",
-      description: "Based on her recent social media hints and past patterns...",
-      category: "pop_culture",
-      closes_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-      yes_votes: 847,
-      no_votes: 234,
-      total_votes: 1081,
-      status: "open",
-      creator: { username: "swiftie_prophet", display_name: "Taylor's Oracle" },
-      created_at: new Date().toISOString(),
-      user_vote: null
-    },
-    {
-      id: 2,
-      title: "Will someone get eliminated on Love Island tonight?",
-      description: "Tension is high in the villa...",
-      category: "entertainment",
-      closes_at: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString(),
-      yes_votes: 523,
-      no_votes: 412,
-      total_votes: 935,
-      status: "open",
-      creator: { username: "reality_guru", display_name: "Reality TV Expert" },
-      created_at: new Date().toISOString(),
-      user_vote: null
-    },
-    {
-      id: 3,
-      title: "Will Messi score in the next El Clasico?",
-      description: "The GOAT vs Real Madrid...",
-      category: "sports",
-      closes_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
-      yes_votes: 1234,
-      no_votes: 567,
-      total_votes: 1801,
-      status: "open",
-      creator: { username: "football_fanatic", display_name: "Goal Predictor" },
-      created_at: new Date().toISOString(),
-      user_vote: null
-    },
-    {
-      id: 4,
-      title: "Will Charli D'Amelio hit 200M TikTok followers this month?",
-      description: "She's at 195M and growing fast...",
-      category: "social_media",
-      closes_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-      yes_votes: 892,
-      no_votes: 445,
-      total_votes: 1337,
-      status: "open",
-      creator: { username: "tiktok_tracker", display_name: "Social Media Analyst" },
-      created_at: new Date().toISOString(),
-      user_vote: null
-    }
-  ];
-
+  // FIXED: Only load data when auth is ready and user exists
   useEffect(() => {
-    // Listen for auth changes
-    const unsubscribe = AuthService.addAuthListener(({ user: authUser }) => {
-      setUser(authUser);
-    });
-
-    // Initial data load
-    loadPredictions();
-    loadCategories();
-
-    return unsubscribe;
-  }, []);
+    if (!authLoading && isAuthenticated && user) {
+      console.log('📱 EventsScreen: User authenticated, loading data...');
+      loadInitialData();
+    } else if (!authLoading && !isAuthenticated) {
+      console.log('❌ EventsScreen: User not authenticated');
+      // Clear data when not authenticated
+      setPredictions([]);
+      setCategories([]);
+      setError('Please login to view predictions');
+    }
+  }, [authLoading, isAuthenticated, user]);
 
   useEffect(() => {
     filterPredictions();
   }, [searchQuery, selectedCategory, predictions]);
 
-  const loadPredictions = async () => {
+  const loadInitialData = async () => {
+    if (!isAuthenticated || !user) {
+      console.log('⚠️ EventsScreen: Cannot load data - user not authenticated');
+      return;
+    }
+
     setLoading(true);
     setError(null);
     
     try {
-      // Try to load from API, fall back to mock data
-      const data = await ApiService.getPredictions({ status: 'open', limit: 50 });
-      setPredictions(data.length > 0 ? data : mockPredictions);
+      console.log('📱 EventsScreen: Loading initial data...');
+      await Promise.all([
+        loadPredictions(),
+        loadCategories()
+      ]);
+      console.log('✅ EventsScreen: Initial data loaded successfully');
     } catch (err) {
-      console.error('Error loading predictions:', err);
-      // Use mock data as fallback
-      setPredictions(mockPredictions);
+      console.error('❌ EventsScreen: Error loading initial data:', err);
+      setError(err.message || 'Failed to load data');
     } finally {
       setLoading(false);
     }
   };
 
+  const loadPredictions = async () => {
+    try {
+      console.log('📊 EventsScreen: Loading predictions...');
+      const data = await ApiService.getPredictions({ 
+        status: 'active', 
+        limit: 50 
+      });
+      console.log('📊 EventsScreen: Predictions loaded:', data?.length || 0);
+      setPredictions(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('❌ EventsScreen: Error loading predictions:', err);
+      throw new Error('Failed to load predictions: ' + err.message);
+    }
+  };
+
   const loadCategories = async () => {
     try {
+      console.log('📂 EventsScreen: Loading categories...');
       const data = await ApiService.getCategories();
-      setCategories(data.length > 0 ? data : mockCategories);
+      console.log('📂 EventsScreen: Categories loaded:', data?.length || 0);
+      
+      // Add "all" category at the beginning
+      const allCategories = [
+        { id: 'all', name: '🌟 All', slug: 'all', prediction_count: 0 },
+        ...(Array.isArray(data) ? data : [])
+      ];
+      setCategories(allCategories);
     } catch (err) {
-      console.error('Error loading categories:', err);
-      setCategories(mockCategories);
+      console.error('❌ EventsScreen: Error loading categories:', err);
+      // Set default categories if API fails
+      setCategories([
+        { id: 'all', name: '🌟 All', slug: 'all', prediction_count: 0 },
+        { id: 'pop_culture', name: '🎭 Pop Culture', slug: 'pop_culture', prediction_count: 0 },
+        { id: 'sports', name: '⚽ Sports', slug: 'sports', prediction_count: 0 },
+        { id: 'entertainment', name: '🎬 TV & Movies', slug: 'entertainment', prediction_count: 0 },
+        { id: 'social_media', name: '📱 Social Drama', slug: 'social_media', prediction_count: 0 },
+        { id: 'trending', name: '🔥 Viral', slug: 'trending', prediction_count: 0 },
+      ]);
     }
   };
 
   const filterPredictions = () => {
-    let filtered = predictions;
+    if (!predictions.length) {
+      setFilteredPredictions([]);
+      return;
+    }
+
+    let filtered = [...predictions];
 
     // Filter by category
     if (selectedCategory !== 'all') {
-      filtered = filtered.filter(p => p.category === selectedCategory);
+      filtered = filtered.filter(p => {
+        if (!p.category) return false;
+        return p.category.id === selectedCategory || p.category.slug === selectedCategory;
+      });
     }
 
     // Filter by search query
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(p => 
-        p.title.toLowerCase().includes(query) ||
+        p.title?.toLowerCase().includes(query) ||
         p.description?.toLowerCase().includes(query) ||
-        p.creator?.username.toLowerCase().includes(query)
+        p.creator?.username?.toLowerCase().includes(query)
       );
     }
 
@@ -167,40 +148,61 @@ const EventsScreen = ({ navigation }) => {
   };
 
   const onRefresh = useCallback(async () => {
+    if (!isAuthenticated || !user) return;
+    
     setRefreshing(true);
     try {
-      await loadPredictions();
+      await loadInitialData();
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [isAuthenticated, user]);
 
   const handlePredictionPress = (prediction) => {
+    if (!prediction?.id) {
+      console.warn('⚠️ EventsScreen: Invalid prediction for navigation:', prediction);
+      return;
+    }
+    
+    console.log('🔍 EventsScreen: Navigating to prediction:', prediction.id);
     navigation.navigate('PredictionDetail', {
       predictionId: prediction.id,
       prediction
     });
   };
 
-  const handleVote = async (voteData) => {
-    if (!user) {
-      navigation.navigate('Auth');
-      return;
-    }
+ const handleVote = async (voteData) => {
+  if (!isAuthenticated || !user) {
+    Alert.alert(
+      'Login Required',
+      'Please login to vote on predictions',
+      [
+        { text: 'Cancel' },
+        { text: 'Login', onPress: () => navigation.navigate('Auth') }
+      ]
+    );
+    return;
+  }
 
-    try {
-      await ApiService.castVote({
-        prediction_id: voteData.predictionId,
-        vote: voteData.vote,
-        confidence: voteData.confidence || 75
-      });
-      
-      // Refresh predictions to show updated vote counts
-      await loadPredictions();
-    } catch (err) {
-      console.error('Vote submission error:', err);
-    }
-  };
+  try {
+    console.log('🗳️ EventsScreen: Casting vote:', voteData);
+    
+    // FIXED: Ensure correct data structure
+    await ApiService.castVote({
+      prediction_id: voteData.prediction_id,
+      vote: voteData.vote,
+      confidence: voteData.confidence || 75
+    });
+    
+    // Refresh predictions to show updated vote counts
+    await loadPredictions();
+    
+    Alert.alert('Success!', `Your ${voteData.vote ? 'YES' : 'NO'} vote has been recorded!`);
+  } catch (err) {
+    console.error('❌ EventsScreen: Vote submission error:', err);
+    Alert.alert('Error', err.message || 'Failed to submit vote');
+  }
+};
 
   const renderSearchBar = () => (
     <View style={styles.searchContainer}>
@@ -245,6 +247,14 @@ const EventsScreen = ({ navigation }) => {
             ]}>
               {category.name}
             </Text>
+            {category.prediction_count > 0 && (
+              <Text style={[
+                styles.categoryCount,
+                selectedCategory === category.id && styles.selectedCategoryCount
+              ]}>
+                {category.prediction_count}
+              </Text>
+            )}
           </TouchableOpacity>
         ))}
       </ScrollView>
@@ -253,7 +263,8 @@ const EventsScreen = ({ navigation }) => {
 
   const renderTrendingSection = () => {
     const trendingPredictions = filteredPredictions
-      .sort((a, b) => b.total_votes - a.total_votes)
+      .filter(p => p.total_votes > 0) // Only show predictions with votes
+      .sort((a, b) => (b.total_votes || 0) - (a.total_votes || 0))
       .slice(0, 3);
 
     if (trendingPredictions.length === 0) return null;
@@ -287,10 +298,12 @@ const EventsScreen = ({ navigation }) => {
               </Text>
               <View style={styles.trendingStats}>
                 <Text style={styles.trendingStat}>
-                  🗳️ {prediction.total_votes} votes
+                  🗳️ {prediction.total_votes || 0} votes
                 </Text>
                 <Text style={styles.trendingStat}>
-                  ⏰ {Math.ceil((new Date(prediction.closes_at) - new Date()) / (1000 * 60 * 60 * 24))}d left
+                  ⏰ {prediction.closes_at ? 
+                    Math.max(0, Math.ceil((new Date(prediction.closes_at) - new Date()) / (1000 * 60 * 60 * 24)))
+                    : 0}d left
                 </Text>
               </View>
             </TouchableOpacity>
@@ -333,12 +346,53 @@ const EventsScreen = ({ navigation }) => {
     </View>
   );
 
+  const renderErrorState = () => (
+    <View style={styles.emptyState}>
+      <Ionicons name="alert-circle-outline" size={64} color="#f44336" />
+      <Text style={styles.emptyTitle}>Connection Error</Text>
+      <Text style={styles.emptySubtitle}>{error}</Text>
+      <TouchableOpacity 
+        style={styles.retryButton}
+        onPress={loadInitialData}
+      >
+        <Text style={styles.retryButtonText}>Retry</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
   const renderLoadingIndicator = () => (
     <View style={styles.loadingContainer}>
       <ActivityIndicator size="large" color="#FF69B4" />
       <Text style={styles.loadingText}>Loading predictions...</Text>
     </View>
   );
+
+  // FIXED: Better loading state handling
+  if (authLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#FF69B4" />
+        <Text style={styles.loadingText}>Checking authentication...</Text>
+      </View>
+    );
+  }
+
+  // FIXED: Better auth required state
+  if (!isAuthenticated || !user) {
+    return (
+      <View style={styles.authRequiredContainer}>
+        <Ionicons name="person-outline" size={64} color="#666" />
+        <Text style={styles.authRequiredTitle}>Login Required</Text>
+        <Text style={styles.authRequiredSubtitle}>Please login to view predictions</Text>
+        <TouchableOpacity 
+          style={styles.loginButton}
+          onPress={() => navigation.navigate('Auth')}
+        >
+          <Text style={styles.loginButtonText}>Login</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -351,38 +405,40 @@ const EventsScreen = ({ navigation }) => {
       {/* Search Bar */}
       {renderSearchBar()}
 
-      {loading && !refreshing ? renderLoadingIndicator() : (
-        <FlatList
-          data={filteredPredictions}
-          renderItem={renderPrediction}
-          keyExtractor={(item) => item.id.toString()}
-          refreshControl={
-            <RefreshControl 
-              refreshing={refreshing} 
-              onRefresh={onRefresh}
-              colors={['#FF69B4']}
-            />
-          }
-          ListHeaderComponent={
-            <>
-              {renderCategories()}
-              {renderTrendingSection()}
-              {filteredPredictions.length > 0 && (
-                <View style={styles.allPredictionsHeader}>
-                  <Text style={styles.allPredictionsTitle}>
-                    📋 All Predictions {searchQuery && `(${filteredPredictions.length})`}
-                  </Text>
-                </View>
-              )}
-            </>
-          }
-          ListEmptyComponent={!loading ? renderEmptyState : null}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={[
-            styles.listContent,
-            filteredPredictions.length === 0 && styles.emptyContent
-          ]}
-        />
+      {error && !loading ? renderErrorState() : (
+        loading && !refreshing ? renderLoadingIndicator() : (
+          <FlatList
+            data={filteredPredictions}
+            renderItem={renderPrediction}
+            keyExtractor={(item) => item.id?.toString() || Math.random().toString()}
+            refreshControl={
+              <RefreshControl 
+                refreshing={refreshing} 
+                onRefresh={onRefresh}
+                colors={['#FF69B4']}
+              />
+            }
+            ListHeaderComponent={
+              <>
+                {renderCategories()}
+                {renderTrendingSection()}
+                {filteredPredictions.length > 0 && (
+                  <View style={styles.allPredictionsHeader}>
+                    <Text style={styles.allPredictionsTitle}>
+                      📋 All Predictions {searchQuery && `(${filteredPredictions.length})`}
+                    </Text>
+                  </View>
+                )}
+              </>
+            }
+            ListEmptyComponent={!loading ? renderEmptyState : null}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={[
+              styles.listContent,
+              filteredPredictions.length === 0 && styles.emptyContent
+            ]}
+          />
+        )
       )}
     </View>
   );
@@ -394,8 +450,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
   header: {
-    paddingHorizontal: 20,
     paddingTop: 60,
+    paddingHorizontal: 20,
     paddingBottom: 20,
     backgroundColor: '#111',
     borderBottomWidth: 1,
@@ -404,7 +460,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: '#FF69B4',
+    color: '#fff',
     marginBottom: 5,
   },
   headerSubtitle: {
@@ -434,27 +490,31 @@ const styles = StyleSheet.create({
   },
   categoriesContainer: {
     paddingVertical: 20,
-    backgroundColor: '#000',
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#fff',
-    paddingHorizontal: 20,
     marginBottom: 15,
+    paddingHorizontal: 20,
   },
   categoriesScroll: {
     paddingHorizontal: 20,
   },
   categoryButton: {
-    backgroundColor: '#333',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#222',
     paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
-    marginRight: 10,
+    paddingVertical: 12,
+    borderRadius: 25,
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: '#333',
   },
   selectedCategory: {
     backgroundColor: '#FF69B4',
+    borderColor: '#FF69B4',
   },
   categoryText: {
     fontSize: 14,
@@ -464,46 +524,58 @@ const styles = StyleSheet.create({
   selectedCategoryText: {
     color: '#000',
   },
+  categoryCount: {
+    fontSize: 11,
+    color: '#999',
+    marginLeft: 8,
+    backgroundColor: '#333',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  selectedCategoryCount: {
+    color: '#000',
+    backgroundColor: 'rgba(0,0,0,0.2)',
+  },
   trendingSection: {
     marginVertical: 20,
   },
   trendingHeader: {
-    paddingHorizontal: 20,
-    paddingVertical: 15,
     marginHorizontal: 20,
+    padding: 20,
     borderRadius: 15,
     marginBottom: 15,
   },
   trendingTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#000',
+    color: '#fff',
   },
   trendingSubtitle: {
     fontSize: 14,
-    color: '#000',
-    opacity: 0.8,
+    color: 'rgba(255,255,255,0.9)',
+    marginTop: 5,
   },
   trendingScroll: {
-    paddingLeft: 20,
+    paddingHorizontal: 10,
   },
   trendingCard: {
-    backgroundColor: '#111',
+    backgroundColor: '#222',
+    width: 200,
     padding: 15,
     borderRadius: 12,
-    marginRight: 15,
-    width: width * 0.7,
+    marginHorizontal: 10,
     borderWidth: 1,
     borderColor: '#333',
   },
   trendingRank: {
     position: 'absolute',
-    top: 10,
-    right: 10,
+    top: -5,
+    right: -5,
     backgroundColor: '#FF69B4',
-    borderRadius: 15,
-    width: 25,
-    height: 25,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -513,19 +585,17 @@ const styles = StyleSheet.create({
     color: '#000',
   },
   trendingCardTitle: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
     color: '#fff',
     marginBottom: 10,
-    marginTop: 5,
   },
   trendingStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 5,
   },
   trendingStat: {
     fontSize: 12,
-    color: '#ccc',
+    color: '#999',
   },
   allPredictionsHeader: {
     paddingHorizontal: 20,
@@ -536,15 +606,14 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#fff',
   },
+  predictionCard: {
+    marginVertical: 5,
+  },
   listContent: {
     paddingBottom: 100,
   },
   emptyContent: {
-    flexGrow: 1,
-  },
-  predictionCard: {
-    marginHorizontal: 20,
-    marginBottom: 15,
+    flex: 1,
   },
   emptyState: {
     flex: 1,
@@ -559,35 +628,79 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginTop: 20,
     marginBottom: 10,
+    textAlign: 'center',
   },
   emptySubtitle: {
     fontSize: 16,
-    color: '#ccc',
+    color: '#666',
     textAlign: 'center',
-    lineHeight: 24,
-    marginBottom: 30,
+    lineHeight: 22,
   },
   clearSearchButton: {
     backgroundColor: '#FF69B4',
     paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 25,
+    paddingVertical: 10,
+    borderRadius: 20,
+    marginTop: 20,
   },
   clearSearchText: {
-    color: '#000',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
+    color: '#000',
+  },
+  retryButton: {
+    backgroundColor: '#FF69B4',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 20,
+    marginTop: 20,
+  },
+  retryButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#000',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 40,
+    backgroundColor: '#000',
   },
   loadingText: {
     marginTop: 12,
     fontSize: 16,
     color: '#ccc',
+  },
+  authRequiredContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000',
+    paddingHorizontal: 40,
+  },
+  authRequiredTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  authRequiredSubtitle: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 30,
+  },
+  loginButton: {
+    backgroundColor: '#FF69B4',
+    paddingHorizontal: 40,
+    paddingVertical: 15,
+    borderRadius: 25,
+  },
+  loginButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#000',
   },
 });
 

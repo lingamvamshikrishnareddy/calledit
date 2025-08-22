@@ -1,5 +1,5 @@
-# app/models/vote.py
-from sqlalchemy import Column, String, Boolean, Integer, DateTime, ForeignKey, Index
+# app/models/vote.py - Vote Model (Create this file)
+from sqlalchemy import Column, String, Integer, DateTime, Boolean, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from ..database.connection import Base
@@ -14,50 +14,28 @@ class Vote(Base):
     
     # Vote details
     vote = Column(Boolean, nullable=False)  # True = Yes, False = No
-    confidence = Column(Integer, nullable=False, default=50)  # 1-100 confidence level
+    confidence = Column(Integer, default=5)  # 1-10 confidence level
+    points_wagered = Column(Integer, default=10)
     
-    # Points system
-    points_staked = Column(Integer, default=10)  # Points user stakes on this vote
-    points_earned = Column(Integer, default=0)   # Points earned when resolved
-    multiplier = Column(Integer, default=1)      # Point multiplier based on confidence/timing
-    
-    # Vote timing (for potential bonuses)
-    vote_position = Column(Integer)  # What number vote this was (1st, 2nd, etc.)
+    # Resolution and rewards
+    is_correct = Column(Boolean, nullable=True)  # Set when prediction resolves
+    points_earned = Column(Integer, default=0)   # Points earned from this vote
     
     # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    voted_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
     user = relationship("User", back_populates="votes")
     prediction = relationship("Prediction", back_populates="votes")
     
-    # Indexes for performance
+    # Indexes and constraints
     __table_args__ = (
-        Index('idx_votes_user_id', 'user_id'),
-        Index('idx_votes_prediction_id', 'prediction_id'),
-        Index('idx_votes_user_prediction', 'user_id', 'prediction_id', unique=True),  # One vote per user per prediction
-        Index('idx_votes_created_at', 'created_at'),
+        UniqueConstraint('user_id', 'prediction_id', name='unique_user_prediction_vote'),
+        Index('idx_votes_user', 'user_id'),
+        Index('idx_votes_prediction', 'prediction_id'),
+        Index('idx_votes_voted_at', 'voted_at'),
     )
     
     def __repr__(self):
-        return f"<Vote(id={self.id}, user_id={self.user_id}, prediction_id={self.prediction_id}, vote={self.vote}, confidence={self.confidence})>"
-    
-    @property
-    def vote_text(self):
-        """Human readable vote"""
-        return "Yes" if self.vote else "No"
-    
-    @property
-    def confidence_level(self):
-        """Confidence level as text"""
-        if self.confidence >= 80:
-            return "Very High"
-        elif self.confidence >= 60:
-            return "High"
-        elif self.confidence >= 40:
-            return "Medium"
-        elif self.confidence >= 20:
-            return "Low"
-        else:
-            return "Very Low"
+        return f"<Vote(user_id={self.user_id}, prediction_id={self.prediction_id}, vote={self.vote})>"

@@ -7,7 +7,7 @@ calledit-api/
 │   ├── main.py                    # FastAPI app entry point
 │   ├── config/
 │   │   ├── __init__.py
-│   │   ├── database.py           # Database configuration (updated)
+│   │   ├── supabase.py           # Database configuration (updated)
 │   │   └── jwt_config.py         # JWT configuration
 │   ├── database/
 │   │   ├── __init__.py

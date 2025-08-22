@@ -1,31 +1,66 @@
-# app/auth/dependencies.py
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+# app/auth/dependencies.py - FIXED: Create this file for auth dependencies
+from fastapi import Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 from ..database.connection import get_db
-from ..services.auth_service import AuthService
 from ..models.user import User
+from ..utils.jwt_utils import verify_access_token
 
-security = HTTPBearer()
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+async def get_current_user(
+    authorization: str = Header(None),
     db: Session = Depends(get_db)
 ) -> User:
-    """Dependency to get current authenticated user"""
-    auth_service = AuthService(db)
+    """
+    Dependency to get current authenticated user from JWT token
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=401, 
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authorization header format. Expected 'Bearer <token>'",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    token = authorization.split(" ")[1]
+    
     try:
-        user = auth_service.get_current_user(credentials.credentials)
+        # Verify the JWT token
+        payload = verify_access_token(token)
+        user_id = payload.get("sub")
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token: missing user ID")
+        
+        # Get user from database
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        
+        print(f"🔐 Authenticated user: {user.username}")
         return user
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Get current user error: {e}")
+        print(f"❌ Token verification failed: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to authenticate user"
+            status_code=401,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"}
         )
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """
+    Dependency that requires admin privileges
+    """
+    if not hasattr(current_user, 'is_admin') or not current_user.is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required"
+        )
+    return current_user

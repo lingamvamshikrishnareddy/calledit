@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { Ionicons } from '@expo/vector-icons';
+// Import useAuth hook
+import { useAuth } from '../hooks/useAuth';
 
 // Import all screens
 import HomeScreen from '../screens/HomeScreen';
@@ -13,12 +15,15 @@ import AuthScreen from '../screens/AuthScreen';
 import CreatePredictionScreen from '../screens/CreatePredictionScreen';
 import PredictionDetailScreen from '../screens/PredictionDetailScreen';
 
-
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
 
 // Navigation route constants
 export const Routes = {
+  // Auth Routes
+  AUTH: 'Auth',
+  MAIN: 'Main', // Main tab navigator wrapper
+  
   // Tab Routes
   HOME: 'Home',
   PORTFOLIO: 'Portfolio',
@@ -27,10 +32,8 @@ export const Routes = {
   EVENTS: 'Events',
 
   // Stack Routes
-  AUTH: 'Auth',
   CREATE_PREDICTION: 'CreatePrediction',
   PREDICTION_DETAIL: 'PredictionDetail',
-
 
   // Internal Stack Routes (for main screens in stacks)
   HOME_MAIN: 'HomeMain',
@@ -132,14 +135,6 @@ const PortfolioStackNavigator = () => (
       component={PredictionDetailScreen}
       options={{ gestureEnabled: true }}
     />
-    <Stack.Screen
-      name={Routes.AUTH}
-      component={AuthScreen}
-      options={{
-        presentation: 'modal',
-        gestureEnabled: false // Prevent dismissing auth screen with gesture
-      }}
-    />
   </Stack.Navigator>
 );
 
@@ -214,21 +209,21 @@ const tabBarOptions = {
   },
 };
 
-// Main App Navigator
-const AppNavigator = () => (
+// Main Tab Navigator (only accessible when authenticated)
+const MainTabNavigator = () => (
   <Tab.Navigator
     screenOptions={({ route }) => ({
       ...tabBarOptions,
       tabBarIcon: (props) => renderTabIcon({ route, ...props }),
     })}
-    initialRouteName={Routes.HOME} // Explicit initial route
+    initialRouteName={Routes.HOME}
   >
     <Tab.Screen
       name={Routes.HOME}
       component={HomeStackNavigator}
       options={{
         title: TAB_ICONS[Routes.HOME].title,
-        tabBarTestID: 'home-tab' // For testing
+        tabBarTestID: 'home-tab'
       }}
     />
 
@@ -269,5 +264,49 @@ const AppNavigator = () => (
     />
   </Tab.Navigator>
 );
+
+// Main App Navigator with Authentication Flow
+const AppNavigator = () => {
+  // The useAuth hook will be used inside a component that's wrapped by the navigator
+  return <AuthenticatedAppNavigator />;
+};
+
+// Separate component that uses the useAuth hook
+const AuthenticatedAppNavigator = () => {
+  const { isAuthenticated, loading } = useAuth();
+
+  // Show loading screen while checking auth status
+  if (loading) {
+    // You can return a loading component here
+    return null; // or <LoadingScreen />
+  }
+
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      {isAuthenticated ? (
+        // User is authenticated, show main app
+        <Stack.Screen
+          name={Routes.MAIN}
+          component={MainTabNavigator}
+          options={{
+            gestureEnabled: false, // Prevent going back to auth
+          }}
+        />
+      ) : (
+        // User is not authenticated, show auth screen
+        <Stack.Screen
+          name={Routes.AUTH}
+          component={AuthScreen}
+          options={{
+            gestureEnabled: false, // Prevent dismissing auth screen
+          }}
+        />
+      )}
+    </Stack.Navigator>
+  );
+};
+
+// Export the auth hook for use in other components if needed
+export { useAuth } from '../hooks/useAuth';
 
 export default AppNavigator;

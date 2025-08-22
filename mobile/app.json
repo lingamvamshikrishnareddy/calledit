@@ -17,7 +17,7 @@
       "bundleIdentifier": "com.yourcompany.predictionapp",
       "buildNumber": "1.0.0",
       "infoPlist": {
-        "LSApplicationQueriesSchemes": ["exp", "exps"],
+        "LSApplicationQueriesSchemes": ["exp", "exps", "https"],
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true,
           "NSExceptionDomains": {
@@ -25,6 +25,14 @@
               "NSExceptionAllowsInsecureHTTPLoads": true,
               "NSExceptionMinimumTLSVersion": "1.0",
               "NSExceptionRequiresForwardSecrecy": false
+            },
+            "ngrok.io": {
+              "NSExceptionAllowsInsecureHTTPLoads": true,
+              "NSExceptionMinimumTLSVersion": "1.0"
+            },
+            "ngrok-free.app": {
+              "NSExceptionAllowsInsecureHTTPLoads": true,
+              "NSExceptionMinimumTLSVersion": "1.0"
             }
           }
         }
@@ -35,12 +43,20 @@
         "backgroundColor": "#FFFFFF"
       },
       "package": "com.yourcompany.predictionapp",
-      "versionCode": 1
+      "versionCode": 1,
+      "usesCleartextTraffic": true
     },
-    "web": {},
+    "web": {
+      "bundler": "metro"
+    },
     "plugins": [
       "expo-font"
     ],
-    "scheme": "prediction-app"
+    "scheme": "prediction-app",
+    "extra": {
+      "tunnel": {
+        "enabled": true
+      }
+    }
   }
 }

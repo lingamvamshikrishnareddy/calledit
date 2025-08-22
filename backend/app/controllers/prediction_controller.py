@@ -1,8 +1,8 @@
-# app/controllers/prediction_controller.py
+# app/controllers/prediction_controller.py - FIXED: Added missing methods
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc, asc, and_, or_, func
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 
 from ..models.prediction import Prediction, PredictionStatus
@@ -16,14 +16,15 @@ class PredictionController:
     def create_prediction(self, prediction_data: Dict[str, Any]) -> Prediction:
         """Create a new prediction"""
         prediction = Prediction(
-            id=uuid.uuid4(),
+            id=str(uuid.uuid4()),  # Convert to string
             title=prediction_data['title'],
             description=prediction_data.get('description'),
             category_id=prediction_data['category_id'],
             created_by=prediction_data['created_by'],
             closes_at=prediction_data['closes_at'],
-            points_awarded=prediction_data.get('points_awarded', 100),
-            status=PredictionStatus.ACTIVE,
+            points_pool=prediction_data.get('points_pool', 100),
+            base_points=prediction_data.get('base_points', 10),
+            status=PredictionStatus.ACTIVE.value,  # Store as string value
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
@@ -71,7 +72,7 @@ class PredictionController:
                 .options(joinedload(Prediction.category), joinedload(Prediction.creator))
                 .filter(
                     and_(
-                        Prediction.status == PredictionStatus.ACTIVE,
+                        Prediction.status == PredictionStatus.ACTIVE.value,
                         Prediction.closes_at > datetime.utcnow()
                     )
                 )
@@ -84,7 +85,7 @@ class PredictionController:
         """Get trending predictions (most voted in recent time)"""
         return (self.db.query(Prediction)
                 .options(joinedload(Prediction.category), joinedload(Prediction.creator))
-                .filter(Prediction.status == PredictionStatus.ACTIVE)
+                .filter(Prediction.status == PredictionStatus.ACTIVE.value)
                 .order_by(desc(Prediction.total_votes), desc(Prediction.created_at))
                 .limit(limit)
                 .all())
@@ -131,7 +132,7 @@ class PredictionController:
         if not prediction:
             return None
         
-        prediction.status = PredictionStatus.CLOSED
+        prediction.status = PredictionStatus.CLOSED.value
         prediction.updated_at = datetime.utcnow()
         
         self.db.commit()
@@ -145,7 +146,7 @@ class PredictionController:
         if not prediction:
             return None
         
-        prediction.status = PredictionStatus.RESOLVED
+        prediction.status = PredictionStatus.RESOLVED.value
         prediction.resolution = resolution
         prediction.resolved_at = datetime.utcnow()
         prediction.updated_at = datetime.utcnow()
@@ -171,7 +172,7 @@ class PredictionController:
             self.db.query(Prediction, Vote.vote)
             .options(joinedload(Prediction.category), joinedload(Prediction.creator))
             .outerjoin(Vote, and_(Prediction.id == Vote.prediction_id, Vote.user_id == user_id))
-            .filter(Prediction.status == PredictionStatus.ACTIVE)
+            .filter(Prediction.status == PredictionStatus.ACTIVE.value)
             .order_by(desc(Prediction.created_at))
             .limit(limit)
             .offset(offset)
@@ -185,6 +186,22 @@ class PredictionController:
             }
             for prediction, vote in predictions_with_votes
         ]
+    
+    # FIXED: Added missing method that was being called in prediction_service.py
+    def get_user_vote_for_prediction(self, prediction_id: str, user_id: str) -> Optional[bool]:
+        """Get a user's vote for a specific prediction"""
+        vote = (self.db.query(Vote)
+                .filter(and_(Vote.prediction_id == prediction_id, Vote.user_id == user_id))
+                .first())
+        
+        return vote.vote if vote else None
+    
+    # FIXED: Added missing method for counting predictions by category
+    def count_predictions_by_category(self, category_id: str) -> int:
+        """Count predictions in a specific category"""
+        return (self.db.query(Prediction)
+                .filter(Prediction.category_id == category_id)
+                .count())
     
     def delete_prediction(self, prediction_id: str) -> bool:
         """Delete a prediction (only if no votes exist)"""
@@ -204,17 +221,41 @@ class PredictionController:
     
     def get_predictions_closing_soon(self, hours: int = 24) -> List[Prediction]:
         """Get predictions closing within specified hours"""
-        from datetime import timedelta
         cutoff_time = datetime.utcnow() + timedelta(hours=hours)
         
         return (self.db.query(Prediction)
                 .options(joinedload(Prediction.category), joinedload(Prediction.creator))
                 .filter(
                     and_(
-                        Prediction.status == PredictionStatus.ACTIVE,
+                        Prediction.status == PredictionStatus.ACTIVE.value,
                         Prediction.closes_at <= cutoff_time,
                         Prediction.closes_at > datetime.utcnow()
                     )
                 )
                 .order_by(asc(Prediction.closes_at))
                 .all())
+    
+    # FIXED: Added method to close expired predictions
+    def close_expired_predictions(self) -> int:
+        """Close all expired predictions and return count"""
+        expired_predictions = (
+            self.db.query(Prediction)
+            .filter(
+                and_(
+                    Prediction.status == PredictionStatus.ACTIVE.value,
+                    Prediction.closes_at <= datetime.utcnow()
+                )
+            )
+            .all()
+        )
+        
+        count = 0
+        for prediction in expired_predictions:
+            prediction.status = PredictionStatus.CLOSED.value
+            prediction.updated_at = datetime.utcnow()
+            count += 1
+        
+        if count > 0:
+            self.db.commit()
+        
+        return count

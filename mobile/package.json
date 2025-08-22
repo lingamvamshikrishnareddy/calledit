@@ -3,18 +3,22 @@
   "version": "1.0.0",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
-    "start": "kill-port 19000 19001 8081 && expo start",
-    "android": "kill-port 19000 19001 8081 && expo start --android",
-    "ios": "kill-port 19000 19001 8081 && expo start --ios",
-    "web": "kill-port 19000 19001 8081 && expo start --web",
-    "reset-cache": "kill-port 19000 19001 8081 && expo start --clear"
+    "start": "kill-port 19000 19001 8081 19006 && expo start",
+    "android": "kill-port 19000 19001 8081 19006 && expo start --android",
+    "ios": "kill-port 19000 19001 8081 19006 && expo start --ios",
+    "web": "kill-port 19000 19001 8081 19006 && expo start --web",
+    "tunnel": "kill-port 19000 19001 8081 19006 && expo start --tunnel",
+    "dev-client": "kill-port 19000 19001 8081 19006 && expo start --dev-client --tunnel",
+    "reset-cache": "kill-port 19000 19001 8081 19006 && expo start --clear",
+    "reset-tunnel": "kill-port 19000 19001 8081 19006 && expo start --clear --tunnel"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.0.0",
-    "@react-native-async-storage/async-storage": "2.1.2",
+    "@react-native-async-storage/async-storage": "^2.1.2",
     "@react-navigation/bottom-tabs": "^6.5.20",
     "@react-navigation/native": "^6.1.17",
     "@react-navigation/stack": "^6.3.29",
+    "axios": "^1.11.0",
     "expo": "~53.0.0",
     "expo-font": "~13.3.2",
     "expo-linear-gradient": "~14.1.5",
@@ -29,7 +33,8 @@
     "react-native-vector-icons": "^10.0.3"
   },
   "devDependencies": {
-    "@babel/core": "^7.20.0"
+    "@babel/core": "^7.20.0",
+    "ngrok": "^5.0.0"
   },
   "private": true
 }

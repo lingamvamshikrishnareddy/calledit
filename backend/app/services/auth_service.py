@@ -33,8 +33,13 @@ class AuthService:
                 "display_name": user.display_name,
                 "email": user.email,
                 "avatar_url": user.avatar_url,
+                "bio": user.bio,
                 "total_points": user.total_points,
                 "current_streak": user.current_streak,
+                "longest_streak": user.longest_streak,
+                "predictions_made": user.predictions_made,
+                "predictions_correct": user.predictions_correct,
+                "accuracy_rate": float(user.accuracy_rate) if user.accuracy_rate else 0.0,
                 "level": user.level
             }
         }
@@ -58,8 +63,13 @@ class AuthService:
                 "display_name": user.display_name,
                 "email": user.email,
                 "avatar_url": user.avatar_url,
+                "bio": user.bio,
                 "total_points": user.total_points,
                 "current_streak": user.current_streak,
+                "longest_streak": user.longest_streak,
+                "predictions_made": user.predictions_made,
+                "predictions_correct": user.predictions_correct,
+                "accuracy_rate": float(user.accuracy_rate) if user.accuracy_rate else 0.0,
                 "level": user.level
             }
         }
@@ -71,12 +81,38 @@ class AuthService:
             raise ValueError("Invalid or expired token")
         return user
 
-    def refresh_token(self, refresh_token: str) -> Optional[Dict[str, str]]:
+    def refresh_token(self, refresh_token: str) -> Dict[str, Any]:
         """Refresh access token - SYNCHRONOUS"""
         tokens = self.auth_controller.refresh_access_token(refresh_token)
         if not tokens:
             raise ValueError("Invalid or expired refresh token")
-        return tokens
+        
+        # Get user data for the refreshed token
+        try:
+            user = self.auth_controller.get_user_from_token(tokens["access_token"])
+            return {
+                "access_token": tokens["access_token"],
+                "refresh_token": tokens["refresh_token"],
+                "token_type": tokens["token_type"],
+                "user": {
+                    "id": str(user.id),
+                    "username": user.username,
+                    "display_name": user.display_name,
+                    "email": user.email,
+                    "avatar_url": user.avatar_url,
+                    "bio": user.bio,
+                    "total_points": user.total_points,
+                    "current_streak": user.current_streak,
+                    "longest_streak": user.longest_streak,
+                    "predictions_made": user.predictions_made,
+                    "predictions_correct": user.predictions_correct,
+                    "accuracy_rate": float(user.accuracy_rate) if user.accuracy_rate else 0.0,
+                    "level": user.level
+                }
+            }
+        except Exception:
+            # Return tokens without user data if user fetch fails
+            return tokens
 
     def update_user_profile(self, user_id: str, update_data: Dict[str, Any]):
         """Update user profile - SYNCHRONOUS"""
