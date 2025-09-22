@@ -1,8 +1,8 @@
-# app/controllers/vote_controller.py
+# app/controllers/vote_controller.py - FIXED: Timezone handling
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc, and_, func
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 from ..models.vote import Vote
@@ -12,16 +12,27 @@ class VoteController:
     def __init__(self, db: Session):
         self.db = db
     
+    def _get_current_utc_time(self):
+        """Get current UTC time as timezone-aware datetime"""
+        return datetime.now(timezone.utc)
+    
     def create_vote(self, vote_data: Dict[str, Any]) -> Vote:
         """Create a new vote"""
+        current_time = self._get_current_utc_time()
+        
         vote = Vote(
-            id=uuid.uuid4(),
+            id=str(uuid.uuid4()),
             user_id=vote_data['user_id'],
             prediction_id=vote_data['prediction_id'],
             vote=vote_data['vote'],
-            confidence=vote_data.get('confidence', 50),
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            confidence=vote_data.get('confidence', 75),
+            points_wagered=vote_data.get('points_wagered', 10),
+            points_spent=vote_data.get('points_spent', 10),
+            points_earned=vote_data.get('points_earned', 0),
+            is_resolved=vote_data.get('is_resolved', False),
+            is_correct=vote_data.get('is_correct', None),
+            created_at=current_time,
+            updated_at=current_time
         )
         
         self.db.add(vote)
@@ -74,7 +85,7 @@ class VoteController:
             if field in allowed_fields:
                 setattr(vote, field, value)
         
-        vote.updated_at = datetime.utcnow()
+        vote.updated_at = self._get_current_utc_time()
         self.db.commit()
         self.db.refresh(vote)
         
@@ -150,7 +161,7 @@ class VoteController:
             return None
         
         vote.points_earned = points
-        vote.updated_at = datetime.utcnow()
+        vote.updated_at = self._get_current_utc_time()
         
         self.db.commit()
         self.db.refresh(vote)
@@ -187,11 +198,21 @@ class VoteController:
                 'reason': 'prediction_not_found'
             }
         
-        if prediction.closes_at <= datetime.utcnow():
-            return {
-                'can_vote': False,
-                'reason': 'prediction_closed'
-            }
+        # FIXED: Timezone-aware comparison
+        current_time = self._get_current_utc_time()
+        if prediction.closes_at:
+            # Normalize the closes_at time for comparison
+            closes_at = prediction.closes_at
+            if closes_at.tzinfo is None:
+                closes_at = closes_at.replace(tzinfo=timezone.utc)
+            else:
+                closes_at = closes_at.astimezone(timezone.utc)
+            
+            if closes_at <= current_time:
+                return {
+                    'can_vote': False,
+                    'reason': 'prediction_closed'
+                }
         
         if prediction.status != 'active':
             return {

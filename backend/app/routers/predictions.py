@@ -1,41 +1,44 @@
 # app/routers/predictions.py
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional
 from pydantic import BaseModel, Field
-from datetime import datetime
+from typing import List, Optional
+from datetime import datetime, timedelta
+import uuid
+
 from ..database.connection import get_db
 from ..auth.dependencies import get_current_user
-from ..services.prediction_service import PredictionService
 from ..models.user import User
+from ..models.prediction import Prediction, PredictionStatus
+from ..services.prediction_service import PredictionService
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
 
-class PredictionCreate(BaseModel):
+class CreatePredictionRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=1000)
     category_id: str
-    closes_at: datetime
+    closes_at: Optional[datetime] = Field(None, description="When voting closes (optional)")
 
 class PredictionUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = Field(None, max_length=1000)
-    status: Optional[str] = None
-    closes_at: Optional[datetime] = None
 
 class PredictionResponse(BaseModel):
     id: str
     title: str
     description: Optional[str]
-    category: dict
+    category: Optional[dict]
     creator: dict
     status: str
-    yes_votes: int
-    no_votes: int
-    total_votes: int
-    points_awarded: int
-    closes_at: str
+    yes_votes: int = 0
+    no_votes: int = 0
+    total_votes: int = 0
+    points_awarded: int = 100
+    closes_at: Optional[str]
     created_at: str
+    resolved_at: Optional[str] = None
+    resolution: Optional[bool] = None
     user_vote: Optional[bool] = None
 
     class Config:
@@ -49,7 +52,7 @@ class CategoryResponse(BaseModel):
     icon_name: Optional[str]
     color: str
     prediction_count: int
-    created_at: str
+    created_at: Optional[str]
 
     class Config:
         from_attributes = True
@@ -63,11 +66,11 @@ async def get_predictions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get predictions with optional filtering and pagination"""
+    """Get public predictions with optional filtering and pagination"""
     try:
         service = PredictionService(db)
         predictions = await service.get_predictions(
-            user_id=str(current_user.id),
+            user_id=current_user.id,
             category=category,
             status=status,
             limit=limit,
@@ -80,52 +83,61 @@ async def get_predictions(
 
 @router.post("/", response_model=PredictionResponse)
 async def create_prediction(
-    prediction_data: PredictionCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    request: CreatePredictionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Create a new prediction"""
     try:
+        closes_at = request.closes_at
+        if not closes_at:
+            closes_at = datetime.utcnow() + timedelta(days=1)
+
+        prediction_data = {
+            'title': request.title,
+            'description': request.description,
+            'category_id': request.category_id,
+            'created_by': current_user.id,
+            'closes_at': closes_at
+        }
+
         service = PredictionService(db)
-        prediction = await service.create_prediction(
-            prediction_data.dict(),
-            str(current_user.id)
-        )
+        prediction = await service.create_prediction(prediction_data, current_user.id)
+        
+        # Update user stats if user has predictions_made attribute
+        if hasattr(current_user, 'predictions_made'):
+            current_user.predictions_made += 1
+            db.commit()
+        
         return prediction
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error creating prediction: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to create prediction")
 
-@router.get("/categories", response_model=List[CategoryResponse])
-async def get_categories(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+@router.get("/my-predictions", response_model=List[PredictionResponse])
+async def get_my_predictions(
+    limit: int = Query(20, le=100, ge=1),
+    offset: int = Query(0, ge=0),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-    """Get all prediction categories with statistics"""
+    """Get predictions created by current user"""
     try:
         service = PredictionService(db)
-        categories = await service.get_categories()
-        return categories
-    except Exception as e:
-        print(f"Error getting categories: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve categories")
-
-@router.get("/trending", response_model=List[PredictionResponse])
-async def get_trending_predictions(
-    limit: int = Query(10, le=50, ge=1, description="Maximum number of trending predictions"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get trending predictions (most voted recently)"""
-    try:
-        service = PredictionService(db)
-        predictions = await service.get_trending_predictions(str(current_user.id), limit)
+        predictions = await service.get_user_predictions(current_user.id, limit, offset)
+        
+        # Apply status filter if provided
+        if status:
+            predictions = [p for p in predictions if p.get('status') == status]
+        
         return predictions
     except Exception as e:
-        print(f"Error getting trending predictions: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve trending predictions")
+        print(f"Error getting user's predictions: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve your predictions")
 
 @router.get("/user/{user_id}", response_model=List[PredictionResponse])
 async def get_user_predictions(
@@ -144,22 +156,6 @@ async def get_user_predictions(
         print(f"Error getting user predictions: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to retrieve user predictions")
 
-@router.get("/my-predictions", response_model=List[PredictionResponse])
-async def get_my_predictions(
-    limit: int = Query(20, le=100, ge=1),
-    offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get predictions created by current user"""
-    try:
-        service = PredictionService(db)
-        predictions = await service.get_user_predictions(str(current_user.id), limit, offset)
-        return predictions
-    except Exception as e:
-        print(f"Error getting user's predictions: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve your predictions")
-
 @router.get("/{prediction_id}", response_model=PredictionResponse)
 async def get_prediction(
     prediction_id: str,
@@ -169,9 +165,11 @@ async def get_prediction(
     """Get a specific prediction by ID"""
     try:
         service = PredictionService(db)
-        prediction = await service.get_prediction_by_id(prediction_id, str(current_user.id))
+        prediction = await service.get_prediction_by_id(prediction_id, current_user.id)
+        
         if not prediction:
             raise HTTPException(status_code=404, detail="Prediction not found")
+        
         return prediction
     except HTTPException:
         raise
@@ -186,19 +184,17 @@ async def update_prediction(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Update a prediction (only by creator or admin)"""
+    """Update a prediction (only by creator before resolution)"""
     try:
         service = PredictionService(db)
-        prediction = await service.update_prediction(
-            prediction_id,
-            str(current_user.id),
-            update_data.dict(exclude_unset=True)
-        )
+        
+        update_dict = update_data.dict(exclude_unset=True)
+        prediction = await service.update_prediction(prediction_id, current_user.id, update_dict)
+        
         if not prediction:
-            raise HTTPException(status_code=404, detail="Prediction not found")
+            raise HTTPException(status_code=404, detail="Prediction not found or cannot be updated")
+        
         return prediction
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
@@ -211,85 +207,37 @@ async def delete_prediction(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Delete a prediction (only by creator or admin, only if no votes)"""
+    """Delete a prediction (only by creator if no votes exist)"""
     try:
         service = PredictionService(db)
-        success = await service.delete_prediction(prediction_id, str(current_user.id))
+        success = await service.delete_prediction(prediction_id, current_user.id)
+        
         if not success:
             raise HTTPException(status_code=404, detail="Prediction not found or cannot be deleted")
+        
+        # Update user stats if user has predictions_made attribute
+        if hasattr(current_user, 'predictions_made'):
+            current_user.predictions_made -= 1
+            db.commit()
+        
         return {"message": "Prediction deleted successfully"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
         print(f"Error deleting prediction {prediction_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to delete prediction")
 
-# Admin endpoints
-@router.post("/{prediction_id}/close")
-async def close_prediction(
-    prediction_id: str,
+@router.get("/trending", response_model=List[PredictionResponse])
+async def get_trending_predictions(
+    limit: int = Query(10, le=50, ge=1, description="Maximum number of trending predictions"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Close a prediction for voting (admin only)"""
-    # Add admin check here
-    if not hasattr(current_user, 'is_admin') or not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
+    """Get trending predictions (most voted recently)"""
     try:
         service = PredictionService(db)
-        prediction = await service.close_prediction(prediction_id)
-        if not prediction:
-            raise HTTPException(status_code=404, detail="Prediction not found")
-        return prediction
+        predictions = await service.get_trending_predictions(current_user.id, limit)
+        return predictions
     except Exception as e:
-        print(f"Error closing prediction {prediction_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to close prediction")
-
-@router.post("/{prediction_id}/resolve")
-async def resolve_prediction(
-    prediction_id: str,
-    resolution: bool,
-    resolution_notes: Optional[str] = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Resolve a prediction with outcome (admin only)"""
-    # Add admin check here
-    if not hasattr(current_user, 'is_admin') or not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    try:
-        service = PredictionService(db)
-        prediction = await service.resolve_prediction(
-            prediction_id, 
-            resolution, 
-            resolution_notes
-        )
-        if not prediction:
-            raise HTTPException(status_code=404, detail="Prediction not found")
-        return prediction
-    except Exception as e:
-        print(f"Error resolving prediction {prediction_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to resolve prediction")
-
-# Batch operations
-@router.post("/batch/close-expired")
-async def close_expired_predictions(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Close all expired predictions (admin only)"""
-    # Add admin check here
-    if not hasattr(current_user, 'is_admin') or not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    try:
-        service = PredictionService(db)
-        closed_count = await service.close_expired_predictions()
-        return {"message": f"Closed {closed_count} expired predictions"}
-    except Exception as e:
-        print(f"Error closing expired predictions: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to close expired predictions")
+        print(f"Error getting trending predictions: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve trending predictions")

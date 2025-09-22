@@ -18,6 +18,9 @@ calledit-api/
 │   │   ├── prediction.py         # Prediction and Category models
 │   │   ├── vote.py               # Vote model
 │   │   └── leaderboard.py        # Leaderboard model
+        |---points_transaction.py  #points model 
+        |--category.py
+        
 │   ├── controllers/              # New directory for CRUD controllers
 │   │   ├── __init__.py
 │   │   ├── user_controller.py    # User CRUD operations
@@ -26,6 +29,7 @@ calledit-api/
 │   │   ├── category_controller.py    # Category CRUD operations
 │   │   ├── vote_controller.py    # Vote CRUD operations
 │   │   └── leaderboard_controller.py # Leaderboard operations
+        
 │   ├── routers/
 │   │   ├── __init__.py
 │   │   ├── auth.py               # Authentication endpoints (updated)
@@ -33,12 +37,17 @@ calledit-api/
 │   │   ├── users.py              # User endpoints (updated)
 │   │   ├── votes.py              # Vote endpoints (updated)
 │   │   └── leaderboard.py        # Leaderboard endpoints (updated)
+        |-- points.py #poinst_transaction endpoint
+        |-- categories.py
 │   ├── services/                 # Business logic layer
 │   │   ├── __init__.py
 │   │   ├── auth_service.py       # Authentication business logic (updated)
 │   │   ├── prediction_service.py # Prediction business logic (updated)
 │   │   ├── vote_service.py       # Vote business logic (updated)
 │   │   └── leaderboard_service.py # Leaderboard business logic (updated)
+    -    ----   points_service.py     # Points endpoint
+         ----category_service.py  # Category 
+    
 │   ├── utils/                    # New directory for utilities
 │   │   ├── __init__.py
 │   │   ├── password_utils.py     # Password hashing utilities

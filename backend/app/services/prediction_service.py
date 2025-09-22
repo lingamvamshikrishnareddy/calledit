@@ -1,11 +1,10 @@
-# app/services/prediction_service.py - FIXED: Removed .value access on status field
+# app/services/prediction_service.py - FIXED: Categories logic removed
 from sqlalchemy.orm import Session
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timezone
 import logging
 
 from ..controllers.prediction_controller import PredictionController
-from ..controllers.category_controller import CategoryController
 from ..models.prediction import Prediction, PredictionStatus
 from ..models.user import User
 
@@ -15,7 +14,6 @@ class PredictionService:
     def __init__(self, db: Session):
         self.db = db
         self.prediction_controller = PredictionController(db)
-        self.category_controller = CategoryController(db)
 
     async def get_predictions(
         self, 
@@ -27,7 +25,7 @@ class PredictionService:
     ) -> List[Dict[str, Any]]:
         """Get predictions with user votes included"""
         try:
-            # FIXED: Map frontend status to backend status
+            # Map frontend status to backend status
             backend_status = self._map_frontend_status(status)
             
             logger.info(f"Getting predictions for user {user_id} with status: {status} -> {backend_status}")
@@ -39,11 +37,11 @@ class PredictionService:
                 offset=offset
             )
             
-            # FIXED: Apply filters after getting data if needed
+            # Apply filters after getting data if needed
             if backend_status:
                 predictions_with_votes = [
                     p for p in predictions_with_votes 
-                    if p['prediction'].status == backend_status  # REMOVED .value access
+                    if p['prediction'].status == backend_status
                 ]
             
             if category:
@@ -87,11 +85,6 @@ class PredictionService:
     async def create_prediction(self, prediction_data: Dict[str, Any], created_by: str) -> Dict[str, Any]:
         """Create new prediction"""
         try:
-            # Validate category exists
-            category = await self.category_controller.get_category_by_id(prediction_data['category_id'])
-            if not category:
-                raise ValueError(f"Category {prediction_data['category_id']} not found")
-            
             # Add creator to data
             prediction_data['created_by'] = created_by
             
@@ -103,34 +96,6 @@ class PredictionService:
             
         except Exception as e:
             logger.error(f"Error creating prediction: {str(e)}")
-            raise
-
-    async def get_categories(self) -> List[Dict[str, Any]]:
-        """Get all categories with prediction counts"""
-        try:
-            categories = self.category_controller.get_all_categories()
-            
-            formatted_categories = []
-            for category in categories:
-                # Count predictions in this category
-                prediction_count = self.prediction_controller.count_predictions_by_category(category.id)
-                
-                formatted_cat = {
-                    'id': category.id,
-                    'name': category.name,
-                    'slug': category.slug,
-                    'description': getattr(category, 'description', None),
-                    'icon_name': getattr(category, 'icon_name', 'help-circle'),
-                    'color': getattr(category, 'color', '#6B7280'),
-                    'prediction_count': prediction_count,
-                    'created_at': category.created_at.isoformat() if hasattr(category, 'created_at') else None,
-                }
-                formatted_categories.append(formatted_cat)
-            
-            return formatted_categories
-            
-        except Exception as e:
-            logger.error(f"Error getting categories: {str(e)}")
             raise
 
     async def get_trending_predictions(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
@@ -242,7 +207,7 @@ class PredictionService:
         if not frontend_status:
             return None
         
-        # FIXED: Map frontend status to backend PredictionStatus enum values
+        # Map frontend status to backend PredictionStatus enum values
         status_mapping = {
             'active': 'active',
             'open': 'active',  # Treat 'open' as 'active'
@@ -256,7 +221,7 @@ class PredictionService:
     async def _format_prediction_for_frontend(self, prediction: Prediction, user_vote: Optional[bool]) -> Dict[str, Any]:
         """Format prediction object for frontend consumption"""
         try:
-            # FIXED: Safe attribute access with fallbacks
+            # Safe attribute access with fallbacks
             category_data = None
             if hasattr(prediction, 'category') and prediction.category:
                 category_data = {
@@ -275,7 +240,7 @@ class PredictionService:
                     'avatar_url': getattr(prediction.creator, 'avatar_url', None)
                 }
 
-            # FIXED: Convert datetime objects to ISO strings
+            # Convert datetime objects to ISO strings
             closes_at_iso = None
             if prediction.closes_at:
                 if hasattr(prediction.closes_at, 'isoformat'):
@@ -290,12 +255,12 @@ class PredictionService:
                 else:
                     created_at_iso = str(prediction.created_at)
 
-            # FIXED: Ensure vote counts are integers
+            # Ensure vote counts are integers
             yes_votes = max(0, prediction.yes_votes or 0)
             no_votes = max(0, prediction.no_votes or 0)
             total_votes = yes_votes + no_votes
 
-            # CRITICAL FIX: Handle status field properly - don't access .value on strings
+            # Handle status field properly - don't access .value on strings
             status_value = prediction.status
             if hasattr(prediction.status, 'value'):
                 status_value = prediction.status.value
@@ -310,7 +275,7 @@ class PredictionService:
                 'description': prediction.description,
                 'category': category_data,
                 'creator': creator_data,
-                'status': status_value,  # FIXED: Safe status access
+                'status': status_value,
                 'yes_votes': yes_votes,
                 'no_votes': no_votes,
                 'total_votes': total_votes,

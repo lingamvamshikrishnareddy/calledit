@@ -1,10 +1,11 @@
-# app/controllers/auth_controller.py - Fixed Auth Controller
+# app/controllers/auth_controller.py - Complete with PointsTransaction
 from sqlalchemy.orm import Session
 from typing import Optional, Dict, Any
 import uuid
 from datetime import datetime
 
 from ..models.user import User
+from ..models.points_transaction import PointsTransaction, TransactionType
 from ..utils.password_utils import PasswordUtils
 from ..config.jwt_config import jwt_config
 
@@ -14,37 +15,64 @@ class AuthController:
         self.password_utils = PasswordUtils()
     
     def create_user(self, user_data: Dict[str, Any]) -> User:
-        """Create a new user in the database"""
+        """Create a new user with 100 initial points and transaction log"""
         try:
-            # Hash the password
             hashed_password = self.password_utils.hash_password(user_data['password'])
             
-            # Create user instance - ID will be auto-generated as string UUID
+            # Generate user ID first
+            user_id = str(uuid.uuid4())
+            
             user = User(
-                username=user_data['username'],
-                display_name=user_data['display_name'],
-                email=user_data['email'],
+                id=user_id,
+                username=user_data['username'].lower(),
+                display_name=user_data.get('display_name', user_data['username']),
+                email=user_data['email'].lower(),
                 password_hash=hashed_password,
+                total_points=100,  # Initial signup bonus
+                total_staked=0,
+                total_won=0,
+                accuracy_rate=0.00,
+                referral_points_earned=0,
+                predictions_made=0,
+                predictions_correct=0,
+                current_streak=0,
+                longest_streak=0,
+                level=1,
+                is_active=True,
                 created_at=datetime.utcnow(),
                 updated_at=datetime.utcnow()
             )
             
             self.db.add(user)
+            self.db.flush()  # Flush to ensure user.id is available
+            
+            # Create initial signup bonus transaction
+            initial_transaction = PointsTransaction(
+                id=str(uuid.uuid4()),
+                user_id=user.id,
+                transaction_type=TransactionType.SIGNUP_BONUS,
+                amount=100,
+                balance_after=100,
+                description="Welcome bonus! Start your prediction journey with 100 points!",
+                created_at=datetime.utcnow()
+            )
+            
+            self.db.add(initial_transaction)
             self.db.commit()
             self.db.refresh(user)
             
-            print(f"✅ User created successfully: {user.username} (ID: {user.id})")
+            print(f"✅ User created successfully: {user.username} with 100 bonus points")
             return user
             
         except Exception as e:
-            print(f"❌ Error creating user: {e}")
             self.db.rollback()
+            print(f"❌ Error creating user: {str(e)}")
             raise e
     
     def get_user_by_email(self, email: str) -> Optional[User]:
         """Get user by email"""
         try:
-            return self.db.query(User).filter(User.email == email).first()
+            return self.db.query(User).filter(User.email == email.lower()).first()
         except Exception as e:
             print(f"Error getting user by email: {e}")
             return None
@@ -52,15 +80,14 @@ class AuthController:
     def get_user_by_username(self, username: str) -> Optional[User]:
         """Get user by username"""
         try:
-            return self.db.query(User).filter(User.username == username).first()
+            return self.db.query(User).filter(User.username == username.lower()).first()
         except Exception as e:
             print(f"Error getting user by username: {e}")
             return None
     
     def get_user_by_id(self, user_id: str) -> Optional[User]:
-        """Get user by ID - FIXED to handle string IDs properly"""
+        """Get user by ID"""
         try:
-            # Since ID is now a string, we can query directly
             return self.db.query(User).filter(User.id == user_id).first()
         except Exception as e:
             print(f"Error getting user by ID: {e}")
@@ -99,7 +126,7 @@ class AuthController:
         """Create access and refresh tokens for user"""
         try:
             user_data = {
-                "sub": str(user.id),  # Ensure it's a string
+                "sub": str(user.id),
                 "email": user.email,
                 "username": user.username
             }
@@ -151,7 +178,7 @@ class AuthController:
     def check_username_exists(self, username: str) -> bool:
         """Check if username already exists"""
         try:
-            return self.db.query(User).filter(User.username == username).first() is not None
+            return self.db.query(User).filter(User.username == username.lower()).first() is not None
         except Exception as e:
             print(f"Error checking username exists: {e}")
             return False
@@ -159,7 +186,7 @@ class AuthController:
     def check_email_exists(self, email: str) -> bool:
         """Check if email already exists"""
         try:
-            return self.db.query(User).filter(User.email == email).first() is not None
+            return self.db.query(User).filter(User.email == email.lower()).first() is not None
         except Exception as e:
             print(f"Error checking email exists: {e}")
             return False
@@ -202,3 +229,51 @@ class AuthController:
         except Exception as e:
             print(f"Error searching users: {e}")
             return []
+    
+    def add_points_transaction(self, 
+                              user_id: str, 
+                              transaction_type: str,
+                              amount: int,
+                              description: str = None,
+                              prediction_id: str = None) -> Optional[PointsTransaction]:
+        """Add a points transaction and update user balance"""
+        try:
+            user = self.get_user_by_id(user_id)
+            if not user:
+                return None
+            
+            # Calculate new balance
+            new_balance = user.total_points + amount
+            
+            # Don't allow negative balance
+            if new_balance < 0:
+                print(f"Transaction would result in negative balance for user {user_id}")
+                return None
+            
+            # Create transaction
+            transaction = PointsTransaction(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                transaction_type=transaction_type,
+                amount=amount,
+                balance_after=new_balance,
+                description=description,
+                prediction_id=prediction_id,
+                created_at=datetime.utcnow()
+            )
+            
+            # Update user balance
+            user.total_points = new_balance
+            user.updated_at = datetime.utcnow()
+            
+            self.db.add(transaction)
+            self.db.commit()
+            self.db.refresh(transaction)
+            
+            print(f"✅ Points transaction created: {amount} points for user {user_id}")
+            return transaction
+            
+        except Exception as e:
+            print(f"Error creating points transaction: {e}")
+            self.db.rollback()
+            return None

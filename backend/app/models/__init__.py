@@ -1,17 +1,20 @@
-# app/models/__init__.py - Import all models so SQLAlchemy can find relationships
+# app/models/__init__.py - Updated with separate Category model
 from .user import User
-from .prediction import Prediction, Category
+from .category import Category  # Separate Category model
+from .prediction import Prediction
 from .vote import Vote
 from .leaderboard import LeaderboardEntry, Achievement, UserAchievement
-
+from .points_transaction import PointsTransaction, TransactionType
 
 # Make sure all models are imported so SQLAlchemy can resolve relationships
 __all__ = [
     "User",
+    "Category",  # Separate Category model
     "Prediction", 
-    "Category",
     "Vote",
     "LeaderboardEntry",
     "Achievement", 
-    "UserAchievement"
+    "UserAchievement",
+    "PointsTransaction",
+    "TransactionType"
 ]

@@ -1,4 +1,4 @@
-// src/screens/AuthScreen.jsx - Updated for App Navigator Integration
+// src/screens/AuthScreen.jsx - Updated with Hot Pink Theme
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -10,7 +10,6 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../hooks/useAuth';
 
 const AuthScreen = () => {
@@ -141,153 +140,148 @@ const AuthScreen = () => {
 
   return (
     <View style={styles.container}>
-      <LinearGradient
-        colors={['#FF69B4', '#FF1493', '#8A2BE2']}
-        style={styles.gradient}
-      >
-        <View style={styles.header}>
-          {/* Connection Status Indicator */}
-          {connectionStatus && (
-            <View style={styles.connectionStatus}>
-              <View style={[
-                styles.statusIndicator, 
-                { backgroundColor: connectionStatus.status === 'connected' ? '#4CAF50' : '#f44336' }
-              ]} />
-              <Text style={styles.statusText}>
-                {connectionStatus.status === 'connected' ? 'Connected' : 'Disconnected'}
-              </Text>
-              {connectionStatus.status === 'failed' && (
-                <TouchableOpacity onPress={retryConnection} style={styles.retryButton}>
-                  <Ionicons name="refresh" size={16} color="#fff" />
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
-          
-          <View style={styles.headerContent}>
-            <Text style={styles.title}>
-              {isLogin ? '👋 Welcome Back!' : '🎉 Join the Fun!'}
+      <View style={styles.header}>
+        {/* Connection Status Indicator */}
+        {connectionStatus && (
+          <View style={styles.connectionStatus}>
+            <View style={[
+              styles.statusIndicator, 
+              { backgroundColor: connectionStatus.status === 'connected' ? '#22ddd7' : '#f44336' }
+            ]} />
+            <Text style={styles.statusText}>
+              {connectionStatus.status === 'connected' ? 'Connected' : 'Disconnected'}
             </Text>
-            <Text style={styles.subtitle}>
-              {isLogin 
-                ? 'Ready to make some predictions?' 
-                : 'Start calling your shots!'
-              }
-            </Text>
+            {connectionStatus.status === 'failed' && (
+              <TouchableOpacity onPress={retryConnection} style={styles.retryButton}>
+                <Ionicons name="refresh" size={16} color="#fff" />
+              </TouchableOpacity>
+            )}
           </View>
+        )}
+        
+        <View style={styles.headerContent}>
+          <Text style={styles.title}>
+            {isLogin ? '👋 Welcome Back!' : '🎉 Join the Fun!'}
+          </Text>
+          <Text style={styles.subtitle}>
+            {isLogin 
+              ? 'Ready to make some predictions?' 
+              : 'Start calling your shots!'
+            }
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.form}>
+        <View style={styles.inputContainer}>
+          <Ionicons name="person-outline" size={20} color="#666" />
+          <TextInput
+            style={styles.input}
+            placeholder="Username"
+            placeholderTextColor="#666"
+            value={formData.username}
+            onChangeText={(value) => handleInputChange('username', value)}
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!isFormLoading}
+          />
         </View>
 
-        <View style={styles.form}>
+        {!isLogin && (
           <View style={styles.inputContainer}>
-            <Ionicons name="person-outline" size={20} color="#666" />
+            <Ionicons name="mail-outline" size={20} color="#666" />
             <TextInput
               style={styles.input}
-              placeholder="Username"
+              placeholder="Email"
               placeholderTextColor="#666"
-              value={formData.username}
-              onChangeText={(value) => handleInputChange('username', value)}
+              value={formData.email}
+              onChangeText={(value) => handleInputChange('email', value)}
+              keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
               editable={!isFormLoading}
             />
           </View>
+        )}
 
-          {!isLogin && (
-            <View style={styles.inputContainer}>
-              <Ionicons name="mail-outline" size={20} color="#666" />
-              <TextInput
-                style={styles.input}
-                placeholder="Email"
-                placeholderTextColor="#666"
-                value={formData.email}
-                onChangeText={(value) => handleInputChange('email', value)}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!isFormLoading}
-              />
-            </View>
-          )}
+        <View style={styles.inputContainer}>
+          <Ionicons name="lock-closed-outline" size={20} color="#666" />
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            placeholderTextColor="#666"
+            value={formData.password}
+            onChangeText={(value) => handleInputChange('password', value)}
+            secureTextEntry
+            editable={!isFormLoading}
+          />
+        </View>
 
+        {!isLogin && (
           <View style={styles.inputContainer}>
             <Ionicons name="lock-closed-outline" size={20} color="#666" />
             <TextInput
               style={styles.input}
-              placeholder="Password"
+              placeholder="Confirm Password"
               placeholderTextColor="#666"
-              value={formData.password}
-              onChangeText={(value) => handleInputChange('password', value)}
+              value={formData.confirmPassword}
+              onChangeText={(value) => handleInputChange('confirmPassword', value)}
               secureTextEntry
               editable={!isFormLoading}
             />
           </View>
+        )}
 
-          {!isLogin && (
-            <View style={styles.inputContainer}>
-              <Ionicons name="lock-closed-outline" size={20} color="#666" />
-              <TextInput
-                style={styles.input}
-                placeholder="Confirm Password"
-                placeholderTextColor="#666"
-                value={formData.confirmPassword}
-                onChangeText={(value) => handleInputChange('confirmPassword', value)}
-                secureTextEntry
-                editable={!isFormLoading}
-              />
-            </View>
-          )}
-
-          <TouchableOpacity
-            style={[
-              styles.submitButton, 
-              (isFormLoading || connectionStatus?.status === 'failed') && styles.submitButtonDisabled
-            ]}
-            onPress={handleSubmit}
-            disabled={isFormLoading || connectionStatus?.status === 'failed'}
-          >
-            {isFormLoading ? (
-              <ActivityIndicator size="small" color="#000" />
-            ) : (
-              <Text style={styles.submitButtonText}>
-                {isLogin ? '🚀 Sign In' : '✨ Create Account'}
-              </Text>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.switchButton}
-            onPress={() => {
-              setIsLogin(!isLogin);
-              // Clear form when switching
-              setFormData({
-                username: '',
-                email: '',
-                password: '',
-                confirmPassword: '',
-              });
-            }}
-            disabled={isFormLoading}
-          >
-            <Text style={styles.switchText}>
-              {isLogin 
-                ? "Don't have an account? Sign up!" 
-                : "Already have an account? Sign in!"
-              }
+        <TouchableOpacity
+          style={[
+            styles.submitButton, 
+            (isFormLoading || connectionStatus?.status === 'failed') && styles.submitButtonDisabled
+          ]}
+          onPress={handleSubmit}
+          disabled={isFormLoading || connectionStatus?.status === 'failed'}
+        >
+          {isFormLoading ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={styles.submitButtonText}>
+              {isLogin ? 'Sign In' : 'Create Account'}
             </Text>
-          </TouchableOpacity>
-        </View>
+          )}
+        </TouchableOpacity>
 
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            🎯 Join thousands making predictions and winning bragging rights!
+        <TouchableOpacity
+          style={styles.switchButton}
+          onPress={() => {
+            setIsLogin(!isLogin);
+            // Clear form when switching
+            setFormData({
+              username: '',
+              email: '',
+              password: '',
+              confirmPassword: '',
+            });
+          }}
+          disabled={isFormLoading}
+        >
+          <Text style={styles.switchText}>
+            {isLogin 
+              ? "Don't have an account? Sign up!" 
+              : "Already have an account? Sign in!"
+            }
           </Text>
-          {connectionStatus?.status === 'failed' && (
-            <Text style={styles.errorText}>
-              ⚠️ Server connection failed. Check if backend is running.
-            </Text>
-          )}
-        </View>
-      </LinearGradient>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.footer}>
+        <Text style={styles.footerText}>
+          🎯 Join thousands making predictions and winning bragging rights!
+        </Text>
+        {connectionStatus?.status === 'failed' && (
+          <Text style={styles.errorText}>
+            ⚠️ Server connection failed. Check if backend is running.
+          </Text>
+        )}
+      </View>
     </View>
   );
 };
@@ -295,9 +289,7 @@ const AuthScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  gradient: {
-    flex: 1,
+    backgroundColor: '#f60976',
   },
   header: {
     paddingTop: 60,
@@ -371,12 +363,12 @@ const styles = StyleSheet.create({
     marginLeft: 10,
   },
   submitButton: {
-    backgroundColor: '#FF69B4',
+    backgroundColor: '#f60976',
     borderRadius: 15,
     paddingVertical: 16,
     alignItems: 'center',
     marginTop: 20,
-    shadowColor: '#FF69B4',
+    shadowColor: '#f60976',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -388,7 +380,7 @@ const styles = StyleSheet.create({
   submitButtonText: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#000',
+    color: '#fff',
   },
   switchButton: {
     alignItems: 'center',
@@ -396,7 +388,7 @@ const styles = StyleSheet.create({
   },
   switchText: {
     fontSize: 16,
-    color: '#FF69B4',
+    color: '#f60976',
     fontWeight: '600',
   },
   footer: {

@@ -11,9 +11,9 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../hooks/useAuth';
 import { usePredictions } from '../hooks/usePredictions';
+import { useVotes } from '../hooks/useVotes';
 import PredictionCard from '../components/feed/PredictionCard';
 
 const HomeScreen = () => {
@@ -26,7 +26,10 @@ const HomeScreen = () => {
     refreshPredictions 
   } = usePredictions();
   
+  const { castVote, loading: voteLoading } = useVotes();
+  
   const [refreshing, setRefreshing] = useState(false);
+  const [userVotes, setUserVotes] = useState(new Map()); // Track user votes
 
   // Initial data load
   useEffect(() => {
@@ -38,8 +41,12 @@ const HomeScreen = () => {
 
   // Log auth changes
   useEffect(() => {
-    console.log('🏠 Auth change in HomeScreen:', isAuthenticated ? 'CURRENT' : 'NO_AUTH', user?.username || 'No user');
-  }, [isAuthenticated, user]);
+    console.log('🏠 Auth state in HomeScreen:', {
+      isAuthenticated,
+      user: user?.username || 'No user',
+      loading: authLoading
+    });
+  }, [isAuthenticated, user, authLoading]);
 
   const handleRefresh = useCallback(async () => {
     if (refreshing || authLoading) return;
@@ -54,6 +61,54 @@ const HomeScreen = () => {
       setRefreshing(false);
     }
   }, [refreshing, authLoading, refreshPredictions]);
+
+  const handleVote = useCallback(async (voteData) => {
+    if (!user || !isAuthenticated) {
+      console.warn('⚠️ User not authenticated for voting');
+      Alert.alert('Authentication Required', 'Please log in to vote on predictions');
+      return;
+    }
+
+    if (voteLoading) {
+      console.warn('⚠️ Vote already in progress');
+      return;
+    }
+
+    console.log('🗳️ HomeScreen: Handling vote:', voteData);
+
+    try {
+      // Cast the vote
+      const result = await castVote(voteData);
+      console.log('✅ Vote successful:', result);
+
+      // Update local state to reflect the vote
+      setUserVotes(prev => new Map(prev).set(voteData.prediction_id, voteData.vote));
+
+      // Refresh predictions to get updated counts
+      await refreshPredictions();
+
+      // Show success message
+      Alert.alert(
+        'Vote Recorded!', 
+        `Your ${voteData.vote ? 'YES' : 'NO'} vote has been recorded.`,
+        [{ text: 'OK' }]
+      );
+
+    } catch (error) {
+      console.error('❌ Vote failed:', error);
+      
+      let errorMessage = 'Failed to record your vote. Please try again.';
+      if (error.message.includes('already voted')) {
+        errorMessage = 'You have already voted on this prediction.';
+      } else if (error.message.includes('Authentication')) {
+        errorMessage = 'Your session has expired. Please log out and log back in.';
+      } else if (error.message.includes('closed')) {
+        errorMessage = 'Voting has closed for this prediction.';
+      }
+
+      Alert.alert('Vote Failed', errorMessage);
+    }
+  }, [user, isAuthenticated, voteLoading, castVote, refreshPredictions]);
 
   const handleLogout = useCallback(() => {
     Alert.alert(
@@ -87,10 +142,7 @@ const HomeScreen = () => {
 
   const renderHeader = () => (
     <View style={styles.header}>
-      <LinearGradient
-        colors={['#FF69B4', '#FF1493', '#8A2BE2']}
-        style={styles.headerGradient}
-      >
+      <View style={styles.headerBackground}>
         <SafeAreaView>
           <View style={styles.headerContent}>
             <View style={styles.headerTop}>
@@ -140,7 +192,7 @@ const HomeScreen = () => {
             </View>
           </View>
         </SafeAreaView>
-      </LinearGradient>
+      </View>
     </View>
   );
 
@@ -149,7 +201,7 @@ const HomeScreen = () => {
     
     return (
       <View style={styles.errorContainer}>
-        <Ionicons name="warning-outline" size={48} color="#ff6b6b" />
+        <Ionicons name="warning-outline" size={48} color="#EC4899" />
         <Text style={styles.errorTitle}>Connection Issue</Text>
         <Text style={styles.errorMessage}>
           {predictionsError.includes('Authentication') 
@@ -180,35 +232,42 @@ const HomeScreen = () => {
     </View>
   );
 
-  const renderPredictionItem = ({ item, index }) => (
-    <PredictionCard 
-      key={`prediction-${item.id}-${index}`} // FIXED: Unique key combining ID and index
-      prediction={item} 
-      onPress={() => {
-        // Navigate to prediction details
-        console.log('🔍 Opening prediction:', item.id);
-      }}
-    />
-  );
+  const renderPredictionItem = ({ item, index }) => {
+    // Add user vote status to prediction
+    const predictionWithVote = {
+      ...item,
+      user_vote: userVotes.get(item.id)
+    };
 
-  // FIXED: Generate unique key for each item
+    return (
+      <PredictionCard 
+        key={`prediction-${item.id}-${index}`}
+        prediction={predictionWithVote} 
+        onVote={handleVote}
+        onPress={() => {
+          // Navigate to prediction details
+          console.log('🔍 Opening prediction:', item.id);
+        }}
+        currentUser={user} // Pass current user to show/hide vote buttons
+        disabled={voteLoading}
+      />
+    );
+  };
+
+  // Generate unique key for each item
   const getItemKey = (item, index) => {
-    // Create unique key combining multiple identifiers
     const baseKey = `${item.id || index}`;
     const timestampKey = item.created_at || item.updated_at || Date.now();
     const uniqueKey = `prediction_${baseKey}_${timestampKey}_${index}`;
-    
-    console.log('🔑 Generated key for item:', uniqueKey);
     return uniqueKey;
   };
 
-  // FIXED: Clean predictions data to ensure unique IDs
+  // Clean predictions data to ensure unique IDs
   const getCleanedPredictions = useCallback(() => {
     if (!predictions || !Array.isArray(predictions)) {
       return [];
     }
 
-    // Filter out any duplicate IDs and invalid entries
     const seen = new Set();
     const cleanedPredictions = predictions.filter((prediction, index) => {
       if (!prediction) {
@@ -243,7 +302,7 @@ const HomeScreen = () => {
     if (authLoading) {
       return (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FF69B4" />
+          <ActivityIndicator size="large" color="#f60976" />
           <Text style={styles.loadingText}>Loading your profile...</Text>
         </View>
       );
@@ -266,7 +325,7 @@ const HomeScreen = () => {
     if (predictionsLoading && !predictions.length && !refreshing) {
       return (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#FF69B4" />
+          <ActivityIndicator size="large" color="#f60976" />
           <Text style={styles.loadingText}>Loading predictions...</Text>
         </View>
       );
@@ -278,33 +337,33 @@ const HomeScreen = () => {
       <FlatList
         data={cleanedPredictions}
         renderItem={renderPredictionItem}
-        keyExtractor={getItemKey} // FIXED: Use custom key extractor
+        keyExtractor={getItemKey}
         contentContainerStyle={styles.listContainer}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            colors={['#FF69B4']}
-            tintColor="#FF69B4"
+            colors={['#f60976']}
+            tintColor="#f60976"
           />
         }
         ListEmptyComponent={renderEmptyState}
         ListHeaderComponent={predictionsError && cleanedPredictions.length > 0 ? (
           <View style={styles.warningBanner}>
-            <Ionicons name="warning-outline" size={20} color="#ff9500" />
+            <Ionicons name="warning-outline" size={20} color="#8B5CF6" />
             <Text style={styles.warningText}>Some data may be outdated</Text>
           </View>
         ) : null}
         showsVerticalScrollIndicator={false}
-        removeClippedSubviews={true} // FIXED: Improve performance
-        maxToRenderPerBatch={10} // FIXED: Limit rendering batch size
-        windowSize={10} // FIXED: Optimize memory usage
-        initialNumToRender={5} // FIXED: Start with fewer items
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={10}
+        windowSize={10}
+        initialNumToRender={5}
         getItemLayout={(data, index) => ({
-          length: 200, // Approximate height of each item
+          length: 200,
           offset: 200 * index,
           index,
-        })} // FIXED: Optimize scrolling performance
+        })}
       />
     );
   };
@@ -313,6 +372,14 @@ const HomeScreen = () => {
     <View style={styles.container}>
       {renderHeader()}
       {renderContent()}
+      {voteLoading && (
+        <View style={styles.voteLoadingOverlay}>
+          <View style={styles.voteLoadingContent}>
+            <ActivityIndicator size="large" color="#f60976" />
+            <Text style={styles.voteLoadingText}>Recording your vote...</Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 };
@@ -325,7 +392,8 @@ const styles = StyleSheet.create({
   header: {
     zIndex: 1,
   },
-  headerGradient: {
+  headerBackground: {
+    backgroundColor: '#f60976',
     paddingBottom: 20,
   },
   headerContent: {
@@ -442,27 +510,27 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   retryButton: {
-    backgroundColor: '#FF69B4',
+    backgroundColor: '#f60976',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 20,
     marginBottom: 12,
   },
   retryButtonText: {
-    color: '#000',
+    color: '#fff',
     fontWeight: '600',
     fontSize: 14,
   },
   logoutRetryButton: {
     backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: '#FF69B4',
+    borderColor: '#f60976',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 20,
   },
   logoutRetryButtonText: {
-    color: '#FF69B4',
+    color: '#f60976',
     fontWeight: '600',
     fontSize: 14,
   },
@@ -489,16 +557,43 @@ const styles = StyleSheet.create({
   warningBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,149,0,0.1)',
+    backgroundColor: 'rgba(139,92,246,0.1)',
     borderRadius: 10,
     padding: 12,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(139,92,246,0.3)',
   },
   warningText: {
     marginLeft: 8,
-    color: '#ff9500',
+    color: '#8B5CF6',
     fontSize: 14,
     fontWeight: '500',
+  },
+  voteLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  voteLoadingContent: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 15,
+    padding: 30,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  voteLoadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#f60976',
+    fontWeight: '600',
   },
 });
 

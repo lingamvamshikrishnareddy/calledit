@@ -1,11 +1,12 @@
-# app/controllers/category_controller.py - FIXED: Created missing controller
+# app/controllers/category_controller.py - FIXED: Correct Category import
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
 
-from ..models.prediction import Category
+# FIXED: Import Category from standalone module
+from ..models.category import Category
 
 class CategoryController:
     def __init__(self, db: Session):
@@ -115,3 +116,10 @@ class CategoryController:
             })
         
         return result
+    
+    def get_prediction_count(self, category_id: str) -> int:
+        """Get prediction count for a category"""
+        from ..models.prediction import Prediction
+        return (self.db.query(Prediction)
+                .filter(Prediction.category_id == category_id)
+                .count())

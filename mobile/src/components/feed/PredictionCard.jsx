@@ -1,216 +1,269 @@
-// src/components/feed/PredictionCard.jsx - FIXED: Correct vote data format
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+// src/components/feed/PredictionCard.jsx - Enhanced with better UI/UX
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+  Dimensions,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+
+const { width } = Dimensions.get('window');
 
 const PredictionCard = ({ 
   prediction, 
   onVote, 
   onPress, 
   currentUser, 
+  disabled = false,
   style 
 }) => {
-  if (!prediction) {
-    return null;
-  }
+  const [votingState, setVotingState] = useState(null); // 'yes', 'no', or null
 
-  const formatTimeLeft = () => {
-    if (!prediction.closes_at) return 'Unknown';
-    
-    const now = new Date();
-    const closesAt = new Date(prediction.closes_at);
-    const diff = closesAt - now;
-    
-    if (diff <= 0) return 'Closed';
-    
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    
-    if (days > 0) return `${days}d ${hours}h left`;
-    if (hours > 0) return `${hours}h left`;
-    return 'Closing soon';
+  // Check if user has already voted
+  const userHasVoted = prediction?.user_vote !== undefined && prediction?.user_vote !== null;
+  const userVote = prediction?.user_vote;
+
+  const handleVotePress = async (voteValue) => {
+    if (!onVote || disabled || userHasVoted) {
+      return;
+    }
+
+    // Haptic feedback would go here in a real app
+    setVotingState(voteValue ? 'yes' : 'no');
+
+    try {
+      await onVote({
+        prediction_id: prediction.id,
+        vote: voteValue,
+        confidence: 75 // Default confidence
+      });
+    } catch (error) {
+      console.error('Vote failed:', error);
+      Alert.alert('Vote Failed', error.message || 'Failed to submit vote');
+    } finally {
+      setVotingState(null);
+    }
   };
 
-  const getVoteDistribution = () => {
-    const totalVotes = (prediction.yes_votes || 0) + (prediction.no_votes || 0);
-    if (totalVotes === 0) return { yesPercentage: 50, noPercentage: 50 };
-    
-    const yesPercentage = (prediction.yes_votes / totalVotes) * 100;
-    const noPercentage = 100 - yesPercentage;
-    
-    return { yesPercentage, noPercentage };
+  const handleCardPress = () => {
+    if (onPress) {
+      onPress(prediction);
+    }
   };
 
-  const handleVote = async (voteValue) => {
-  if (!onVote || !prediction.id) {
-    console.warn('⚠️ PredictionCard: Missing onVote handler or prediction ID');
-    return;
-  }
-
-  console.log('🗳️ PredictionCard: Handling vote:', { 
-    predictionId: prediction.id, 
-    vote: voteValue,
-    user: currentUser?.username 
-  });
-
-  // FIXED: Send vote data in correct format
-  const voteData = {
-    prediction_id: prediction.id,  // Use prediction_id for backend
-    vote: voteValue,               // boolean: true for YES, false for NO
-    confidence: 75                 // default confidence level
+  const formatTimeRemaining = () => {
+    if (!prediction?.closes_at) return 'No deadline';
+    
+    try {
+      const now = new Date();
+      const closeTime = new Date(prediction.closes_at);
+      const diff = closeTime - now;
+      
+      if (diff <= 0) return 'Closed';
+      
+      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      
+      if (days > 0) {
+        return `${days}d ${hours}h left`;
+      } else if (hours > 0) {
+        return `${hours}h left`;
+      } else {
+        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        return `${minutes}m left`;
+      }
+    } catch (error) {
+      return 'Invalid date';
+    }
   };
 
-  try {
-    await onVote(voteData);
-  } catch (error) {
-    console.error('❌ PredictionCard: Vote failed:', error);
-  }
-};
+  const getVotePercentages = () => {
+    const yesVotes = prediction?.yes_votes || 0;
+    const noVotes = prediction?.no_votes || 0;
+    const total = yesVotes + noVotes;
+    
+    if (total === 0) {
+      return { yesPercent: 50, noPercent: 50 };
+    }
+    
+    return {
+      yesPercent: Math.round((yesVotes / total) * 100),
+      noPercent: Math.round((noVotes / total) * 100)
+    };
+  };
 
-  const { yesPercentage, noPercentage } = getVoteDistribution();
-  const totalVotes = (prediction.yes_votes || 0) + (prediction.no_votes || 0);
-  const isActive = prediction.status === 'open' || prediction.status === 'active';
-  const hasUserVoted = prediction.user_vote !== null && prediction.user_vote !== undefined;
-  const timeLeft = formatTimeLeft();
-  const isClosed = timeLeft === 'Closed';
+  const { yesPercent, noPercent } = getVotePercentages();
+  const totalVotes = (prediction?.yes_votes || 0) + (prediction?.no_votes || 0);
+
+  const isExpired = () => {
+    if (!prediction?.closes_at) return false;
+    return new Date(prediction.closes_at) <= new Date();
+  };
+
+  const canVote = !userHasVoted && !isExpired() && prediction?.status === 'active';
 
   return (
     <TouchableOpacity 
-      style={[styles.card, style]} 
-      onPress={() => onPress && onPress(prediction)}
-      activeOpacity={0.95}
+      style={[styles.container, style]} 
+      onPress={handleCardPress}
+      activeOpacity={0.7}
     >
       <LinearGradient
-        colors={['#111', '#1a1a1a']}
+        colors={['#1F2937', '#374151']}
         style={styles.gradient}
       >
         {/* Header */}
         <View style={styles.header}>
-          <View style={styles.creatorInfo}>
-            <Ionicons name="person-circle" size={24} color="#FF69B4" />
-            <Text style={styles.creatorName}>
-              {prediction.creator?.display_name || prediction.creator?.username || 'Unknown'}
-            </Text>
-          </View>
-          <View style={styles.timeInfo}>
-            <Ionicons 
-              name={isClosed ? "lock-closed" : "time"} 
-              size={16} 
-              color={isClosed ? "#666" : "#FF69B4"} 
-            />
-            <Text style={[styles.timeText, isClosed && styles.closedText]}>
-              {timeLeft}
-            </Text>
+          <View style={styles.categoryContainer}>
+            {prediction?.category && (
+              <View style={[styles.categoryBadge, { backgroundColor: prediction.category.color || '#6B7280' }]}>
+                <Text style={styles.categoryText}>{prediction.category.name || 'Other'}</Text>
+              </View>
+            )}
+            <View style={styles.timeContainer}>
+              <Ionicons name="time-outline" size={14} color="#9CA3AF" />
+              <Text style={styles.timeText}>{formatTimeRemaining()}</Text>
+            </View>
           </View>
         </View>
 
-        {/* Prediction Title */}
-        <Text style={styles.title}>{prediction.title}</Text>
+        {/* Title */}
+        <Text style={styles.title} numberOfLines={3}>
+          {prediction?.title || 'Unknown Prediction'}
+        </Text>
 
         {/* Description */}
-        {prediction.description && (
+        {prediction?.description && (
           <Text style={styles.description} numberOfLines={2}>
             {prediction.description}
           </Text>
         )}
 
-        {/* Category */}
-        {prediction.category && (
-          <View style={styles.categoryContainer}>
-            <View style={[styles.categoryBadge, { backgroundColor: prediction.category.color || '#3B82F6' }]}>
-              <Text style={styles.categoryText}>{prediction.category.name}</Text>
-            </View>
-          </View>
-        )}
-
         {/* Vote Distribution Bar */}
-        <View style={styles.distributionContainer}>
+        <View style={styles.voteDistribution}>
           <View style={styles.distributionBar}>
-            <View 
-              style={[
-                styles.yesBar, 
-                { flex: yesPercentage }
-              ]}
-            >
-              {yesPercentage > 15 && (
-                <Text style={styles.distributionText}>
-                  {yesPercentage.toFixed(0)}%
-                </Text>
-              )}
-            </View>
-            <View 
-              style={[
-                styles.noBar, 
-                { flex: noPercentage }
-              ]}
-            >
-              {noPercentage > 15 && (
-                <Text style={styles.distributionText}>
-                  {noPercentage.toFixed(0)}%
-                </Text>
-              )}
-            </View>
+            <View style={[styles.yesBar, { width: `${yesPercent}%` }]} />
+            <View style={[styles.noBar, { width: `${noPercent}%` }]} />
           </View>
-
-          <View style={styles.voteStats}>
-            <Text style={styles.yesVotes}>👍 {prediction.yes_votes || 0}</Text>
-            <Text style={styles.totalVotes}>{totalVotes} votes</Text>
-            <Text style={styles.noVotes}>👎 {prediction.no_votes || 0}</Text>
+          <View style={styles.distributionLabels}>
+            <Text style={styles.yesPercent}>{yesPercent}% YES</Text>
+            <Text style={styles.noPercent}>{noPercent}% NO</Text>
           </View>
         </View>
 
+        {/* Vote Stats */}
+        <View style={styles.statsRow}>
+          <View style={styles.stat}>
+            <Ionicons name="people-outline" size={16} color="#9CA3AF" />
+            <Text style={styles.statText}>{totalVotes} votes</Text>
+          </View>
+          
+          {prediction?.creator && (
+            <View style={styles.stat}>
+              <Ionicons name="person-outline" size={16} color="#9CA3AF" />
+              <Text style={styles.statText}>
+                {prediction.creator.display_name || prediction.creator.username}
+              </Text>
+            </View>
+          )}
+        </View>
+
         {/* User Vote Status */}
-        {hasUserVoted && (
+        {userHasVoted && (
           <View style={styles.userVoteStatus}>
-            <Ionicons 
-              name="checkmark-circle" 
-              size={16} 
-              color="#4caf50" 
-            />
-            <Text style={styles.userVoteText}>
-              You voted: {prediction.user_vote ? 'YES 👍' : 'NO 👎'}
-            </Text>
+            <View style={[
+              styles.userVoteBadge,
+              userVote ? styles.userVoteYes : styles.userVoteNo
+            ]}>
+              <Ionicons 
+                name={userVote ? "checkmark-circle" : "close-circle"} 
+                size={16} 
+                color="#fff" 
+              />
+              <Text style={styles.userVoteText}>
+                You voted {userVote ? 'YES' : 'NO'}
+              </Text>
+            </View>
           </View>
         )}
 
         {/* Vote Buttons */}
-        {isActive && !hasUserVoted && currentUser && (
+        {canVote && (
           <View style={styles.voteButtons}>
+            {/* YES Button - Cyan */}
             <TouchableOpacity
-              style={[styles.voteButton, styles.yesButton]}
-              onPress={() => handleVote(true)}
+              style={[
+                styles.voteButton,
+                styles.yesButton,
+                votingState === 'yes' && styles.votingButton
+              ]}
+              onPress={() => handleVotePress(true)}
+              disabled={disabled || votingState !== null}
+              activeOpacity={0.8}
             >
-              <Ionicons name="thumbs-up" size={16} color="#fff" />
-              <Text style={styles.voteButtonText}>YES</Text>
+              <LinearGradient
+                colors={['#06B6D4', '#0891B2']} // Cyan gradient
+                style={styles.voteButtonGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+              >
+                {votingState === 'yes' ? (
+                  <View style={styles.loadingContainer}>
+                    <Ionicons name="sync" size={20} color="#fff" />
+                    <Text style={styles.voteButtonText}>Voting...</Text>
+                  </View>
+                ) : (
+                  <>
+                    <Ionicons name="thumbs-up" size={20} color="#fff" />
+                    <Text style={styles.voteButtonText}>YES</Text>
+                  </>
+                )}
+              </LinearGradient>
             </TouchableOpacity>
 
+            {/* NO Button - Pink/Red */}
             <TouchableOpacity
-              style={[styles.voteButton, styles.noButton]}
-              onPress={() => handleVote(false)}
+              style={[
+                styles.voteButton,
+                styles.noButton,
+                votingState === 'no' && styles.votingButton
+              ]}
+              onPress={() => handleVotePress(false)}
+              disabled={disabled || votingState !== null}
+              activeOpacity={0.8}
             >
-              <Ionicons name="thumbs-down" size={16} color="#fff" />
-              <Text style={styles.voteButtonText}>NO</Text>
+              <LinearGradient
+                colors={['#EC4899', '#BE185D']} // Pink gradient
+                style={styles.voteButtonGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+              >
+                {votingState === 'no' ? (
+                  <View style={styles.loadingContainer}>
+                    <Ionicons name="sync" size={20} color="#fff" />
+                    <Text style={styles.voteButtonText}>Voting...</Text>
+                  </View>
+                ) : (
+                  <>
+                    <Ionicons name="thumbs-down" size={20} color="#fff" />
+                    <Text style={styles.voteButtonText}>NO</Text>
+                  </>
+                )}
+              </LinearGradient>
             </TouchableOpacity>
           </View>
         )}
 
-        {/* Login Prompt for Non-authenticated Users */}
-        {!currentUser && isActive && (
-          <View style={styles.loginPrompt}>
-            <Text style={styles.loginPromptText}>Login to vote on this prediction</Text>
-          </View>
-        )}
-
-        {/* Closed Status */}
-        {!isActive && (
-          <View style={styles.closedStatus}>
-            <Ionicons name="lock-closed" size={16} color="#666" />
-            <Text style={styles.closedStatusText}>
-              Voting closed
-              {prediction.resolution !== null && prediction.resolution !== undefined && (
-                ` • Result: ${prediction.resolution ? 'YES' : 'NO'}`
-              )}
+        {/* Closed/Expired State */}
+        {!canVote && !userHasVoted && (
+          <View style={styles.closedState}>
+            <Ionicons name="lock-closed-outline" size={20} color="#6B7280" />
+            <Text style={styles.closedText}>
+              {isExpired() ? 'Voting Closed' : 'Voting Not Available'}
             </Text>
           </View>
         )}
@@ -220,141 +273,133 @@ const PredictionCard = ({
 };
 
 const styles = StyleSheet.create({
-  card: {
+  container: {
     marginHorizontal: 20,
     marginVertical: 8,
-    borderRadius: 15,
+    borderRadius: 16,
     overflow: 'hidden',
+    elevation: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 8,
-    elevation: 5,
   },
   gradient: {
     padding: 20,
     borderWidth: 1,
-    borderColor: '#333',
-    borderRadius: 15,
+    borderColor: '#374151',
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  creatorInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  creatorName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#ccc',
-    marginLeft: 8,
-  },
-  timeInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  timeText: {
-    fontSize: 12,
-    color: '#FF69B4',
-    marginLeft: 4,
-    fontWeight: '500',
-  },
-  closedText: {
-    color: '#666',
-  },
-  title: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-    lineHeight: 22,
-    marginBottom: 8,
-  },
-  description: {
-    fontSize: 14,
-    color: '#ccc',
-    lineHeight: 18,
     marginBottom: 12,
   },
   categoryContainer: {
-    marginBottom: 15,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   categoryBadge: {
-    alignSelf: 'flex-start',
     paddingHorizontal: 12,
-    paddingVertical: 4,
+    paddingVertical: 6,
     borderRadius: 12,
   },
   categoryText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#000',
+    color: '#fff',
   },
-  distributionContainer: {
-    marginBottom: 15,
+  timeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  timeText: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    fontWeight: '500',
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+    lineHeight: 24,
+    marginBottom: 8,
+  },
+  description: {
+    fontSize: 14,
+    color: '#D1D5DB',
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  voteDistribution: {
+    marginBottom: 16,
   },
   distributionBar: {
-    flexDirection: 'row',
     height: 8,
+    backgroundColor: '#374151',
     borderRadius: 4,
+    flexDirection: 'row',
     overflow: 'hidden',
     marginBottom: 8,
   },
   yesBar: {
-    backgroundColor: '#4caf50',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: '#06B6D4', // Cyan for YES
+    height: '100%',
   },
   noBar: {
-    backgroundColor: '#f44336',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: '#EC4899', // Pink for NO
+    height: '100%',
   },
-  distributionText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  voteStats: {
+  distributionLabels: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
   },
-  yesVotes: {
+  yesPercent: {
     fontSize: 12,
-    color: '#4caf50',
     fontWeight: '600',
+    color: '#06B6D4', // Cyan
   },
-  totalVotes: {
+  noPercent: {
     fontSize: 12,
-    color: '#ccc',
-    fontWeight: '500',
-  },
-  noVotes: {
-    fontSize: 12,
-    color: '#f44336',
     fontWeight: '600',
+    color: '#EC4899', // Pink
   },
-  userVoteStatus: {
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  stat: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0d4f0c',
-    paddingHorizontal: 12,
+    gap: 6,
+  },
+  statText: {
+    fontSize: 13,
+    color: '#9CA3AF',
+    fontWeight: '500',
+  },
+  userVoteStatus: {
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  userVoteBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 8,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#4caf50',
+    borderRadius: 20,
+    gap: 6,
+  },
+  userVoteYes: {
+    backgroundColor: '#06B6D4', // Cyan
+  },
+  userVoteNo: {
+    backgroundColor: '#EC4899', // Pink
   },
   userVoteText: {
-    fontSize: 12,
-    color: '#4caf50',
+    fontSize: 14,
     fontWeight: '600',
-    marginLeft: 6,
+    color: '#fff',
   },
   voteButtons: {
     flexDirection: 'row',
@@ -362,51 +407,46 @@ const styles = StyleSheet.create({
   },
   voteButton: {
     flex: 1,
-    flexDirection: 'row',
+    borderRadius: 12,
+    overflow: 'hidden',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  voteButtonGradient: {
+    paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 8,
-    gap: 6,
-  },
-  yesButton: {
-    backgroundColor: '#4caf50',
-  },
-  noButton: {
-    backgroundColor: '#f44336',
+    flexDirection: 'row',
+    gap: 8,
   },
   voteButtonText: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#fff',
   },
-  loginPrompt: {
-    backgroundColor: '#1a1a2e',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#FF69B4',
+  loadingContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
   },
-  loginPromptText: {
-    fontSize: 12,
-    color: '#FF69B4',
-    fontWeight: '500',
+  votingButton: {
+    opacity: 0.8,
   },
-  closedStatus: {
+  closedState: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#222',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
+    paddingVertical: 16,
+    gap: 8,
+    backgroundColor: '#374151',
+    borderRadius: 12,
   },
-  closedStatusText: {
-    fontSize: 12,
-    color: '#666',
-    marginLeft: 6,
+  closedText: {
+    fontSize: 14,
+    color: '#9CA3AF',
     fontWeight: '500',
   },
 });

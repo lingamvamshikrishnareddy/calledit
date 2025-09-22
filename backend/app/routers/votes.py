@@ -1,261 +1,239 @@
-# app/routers/votes.py - Updated with direct database operations
+# app/routers/votes.py - FIXED: Proper vote endpoints with correct routing
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import List, Optional
-import uuid
-from ..database.connection import get_db
-from ..models.user import User
-from ..models.vote import Vote  # Add this import
-from ..models.prediction import Prediction  # Add this import
 
-# FIXED: Import the correct auth dependency - this was missing!
-# You need to create this file or adjust the import path based on your auth setup
-try:
-    from ..auth.dependencies import get_current_user
-except ImportError:
-    # Fallback - create a simple dependency
-    from ..utils.jwt_utils import verify_access_token
-    from fastapi import Header
-    
-    async def get_current_user(
-        authorization: str = Header(None),
-        db: Session = Depends(get_db)
-    ) -> User:
-        if not authorization or not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
-        
-        token = authorization.split(" ")[1]
-        try:
-            payload = verify_access_token(token)
-            user_id = payload.get("sub")
-            
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user:
-                raise HTTPException(status_code=401, detail="User not found")
-            
-            return user
-        except Exception:
-            raise HTTPException(status_code=401, detail="Invalid token")
+from ..database.connection import get_db
+from ..auth.dependencies import get_current_user
+from ..models.user import User
+from ..services.vote_service import VoteService
 
 router = APIRouter(prefix="/api/votes", tags=["votes"])
 
-class VoteCreate(BaseModel):
+# Request Models
+class CastVoteRequest(BaseModel):
     prediction_id: str
-    vote: bool  # True=Yes, False=No
-    confidence: int = Field(default=50, ge=1, le=100, description="Confidence level between 1-100")
+    vote: bool  # True for YES, False for NO
+    confidence: int = 75
 
-class VoteUpdate(BaseModel):
-    vote: bool
-    confidence: int = Field(ge=1, le=100, description="Confidence level between 1-100")
+# Response Models
+class PredictionResponse(BaseModel):
+    id: str
+    title: str
+    description: Optional[str]
+    status: str
+    closes_at: Optional[str]
+    resolved_at: Optional[str]
+    resolution: Optional[bool]
 
 class VoteResponse(BaseModel):
     id: str
     prediction_id: str
     vote: bool
     confidence: int
+    points_spent: int
+    points_earned: int
+    is_resolved: bool
+    is_correct: Optional[bool]
     created_at: str
-    updated_at: Optional[str] = None
+    updated_at: Optional[str]
+    prediction: PredictionResponse
 
-@router.post("/", response_model=dict)
+class VoteStatsResponse(BaseModel):
+    total_votes: int
+    active_votes: int
+    resolved_votes: int
+    correct_votes: int
+    accuracy_rate: float
+    win_rate: float
+    average_confidence: float
+    current_streak: int
+    longest_streak: int
+    total_points_earned: int
+    total_points_spent: int
+
+class CastVoteResponse(BaseModel):
+    id: str
+    prediction_id: str
+    vote: bool
+    confidence: int
+    points_wagered: int
+    new_balance: int
+    created_at: str
+    message: str
+
+# FIXED: Correct vote casting endpoint
+@router.post("/", response_model=CastVoteResponse)
 async def cast_vote(
-    vote_data: VoteCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    vote_request: CastVoteRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-    """Cast or update a vote on a prediction"""
-    print(f"📥 Vote request received: {vote_data.dict()}")
-    print(f"👤 Current user: {current_user.username}")
-    
+    """Cast a vote on a prediction - FIXED route"""
     try:
-        # Check if prediction exists and is active
-        prediction = db.query(Prediction).filter(
-            Prediction.id == vote_data.prediction_id
-        ).first()
+        service = VoteService(db)
         
-        if not prediction:
-            raise HTTPException(status_code=404, detail="Prediction not found")
+        # Log the vote attempt
+        print(f"🗳️ Vote attempt: User {current_user.username} voting {vote_request.vote} on {vote_request.prediction_id}")
         
-        if prediction.status != "active":
-            raise HTTPException(status_code=400, detail="Prediction is not active")
+        result = await service.cast_vote(
+            user_id=current_user.id,
+            prediction_id=vote_request.prediction_id,
+            vote=vote_request.vote,
+            confidence=vote_request.confidence,
+            stake_amount=10  # Default stake
+        )
         
-        # Check if user already voted
-        existing_vote = db.query(Vote).filter(
-            Vote.prediction_id == vote_data.prediction_id,
-            Vote.user_id == str(current_user.id)
-        ).first()
+        print(f"✅ Vote cast successfully: {result}")
         
-        if existing_vote:
-            # Update existing vote
-            old_vote = existing_vote.vote
-            existing_vote.vote = vote_data.vote
-            existing_vote.confidence = vote_data.confidence
-            
-            # Update prediction counts
-            if old_vote != vote_data.vote:
-                if old_vote:  # Was YES
-                    prediction.yes_votes -= 1
-                else:  # Was NO
-                    prediction.no_votes -= 1
-                
-                if vote_data.vote:  # New YES
-                    prediction.yes_votes += 1
-                else:  # New NO
-                    prediction.no_votes += 1
-        else:
-            # Create new vote
-            new_vote = Vote(
-                id=str(uuid.uuid4()),
-                prediction_id=vote_data.prediction_id,
-                user_id=str(current_user.id),
-                vote=vote_data.vote,
-                confidence=vote_data.confidence
-            )
-            db.add(new_vote)
-            
-            # Update prediction counts
-            if vote_data.vote:
-                prediction.yes_votes += 1
-            else:
-                prediction.no_votes += 1
+        return CastVoteResponse(
+            id=result['id'],
+            prediction_id=result['prediction_id'],
+            vote=result['vote'],
+            confidence=result['confidence'],
+            points_wagered=result['points_wagered'],
+            new_balance=result['new_balance'],
+            created_at=result['created_at'],
+            message=f"Your {'YES' if result['vote'] else 'NO'} vote has been recorded!"
+        )
         
-        prediction.total_votes = prediction.yes_votes + prediction.no_votes
-        
-        db.commit()
-        print("✅ Vote cast successfully")
-        return {"message": "Vote recorded successfully"}
-        
-    except HTTPException:
-        db.rollback()
-        raise
+    except ValueError as e:
+        print(f"❌ Vote validation error: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        db.rollback()
-        print(f"❌ Vote cast error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"❌ Vote casting error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to cast vote: {str(e)}")
 
-@router.get("/my-votes")
+# FIXED: Correct my votes endpoint
+@router.get("/my-votes", response_model=List[VoteResponse])
 async def get_my_votes(
-    limit: int = Query(50, le=100),
-    offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    limit: int = Query(50, ge=1, le=100, description="Number of votes to return"),
+    offset: int = Query(0, ge=0, description="Number of votes to skip"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-    """Get current user's votes with pagination"""
+    """Get current user's votes with prediction details"""
     try:
-        votes = db.query(Vote).filter(
-            Vote.user_id == str(current_user.id)
-        ).offset(offset).limit(limit).all()
+        print(f"📊 Getting votes for user: {current_user.username}, limit: {limit}, offset: {offset}")
         
-        return [{
-            "id": vote.id,
-            "prediction_id": vote.prediction_id,
-            "vote": vote.vote,
-            "confidence": vote.confidence,
-            "created_at": vote.created_at.isoformat() if vote.created_at else None,
-            "updated_at": vote.updated_at.isoformat() if vote.updated_at else None
-        } for vote in votes]
+        service = VoteService(db)
+        votes = await service.get_user_votes(current_user.id, limit, offset)
+        
+        print(f"✅ Retrieved {len(votes)} votes for user {current_user.username}")
+        
+        # Convert to response format
+        response_votes = []
+        for vote in votes:
+            prediction_data = vote.get('prediction', {})
+            
+            response_vote = VoteResponse(
+                id=vote['id'],
+                prediction_id=vote['prediction_id'],
+                vote=vote['vote'],
+                confidence=vote['confidence'],
+                points_spent=vote['points_spent'],
+                points_earned=vote['points_earned'],
+                is_resolved=vote['is_resolved'],
+                is_correct=vote['is_correct'],
+                created_at=vote['created_at'],
+                updated_at=vote['updated_at'],
+                prediction=PredictionResponse(
+                    id=prediction_data.get('id', vote['prediction_id']),
+                    title=prediction_data.get('title', 'Unknown Prediction'),
+                    description=prediction_data.get('description'),
+                    status=prediction_data.get('status', 'unknown'),
+                    closes_at=prediction_data.get('closes_at'),
+                    resolved_at=prediction_data.get('resolved_at'),
+                    resolution=prediction_data.get('resolution')
+                )
+            )
+            response_votes.append(response_vote)
+        
+        return response_votes
         
     except Exception as e:
-        print(f"❌ Get user votes error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        print(f"❌ Error fetching user votes: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching votes: {str(e)}")
 
-@router.get("/statistics")
-async def get_vote_statistics(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+@router.get("/my-stats", response_model=VoteStatsResponse)
+async def get_my_vote_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Get current user's voting statistics"""
     try:
-        total_votes = db.query(Vote).filter(
-            Vote.user_id == str(current_user.id)
-        ).count()
-        
-        yes_votes = db.query(Vote).filter(
-            Vote.user_id == str(current_user.id),
-            Vote.vote == True
-        ).count()
-        
-        no_votes = db.query(Vote).filter(
-            Vote.user_id == str(current_user.id),
-            Vote.vote == False
-        ).count()
-        
-        avg_confidence = db.query(Vote).filter(
-            Vote.user_id == str(current_user.id)
-        ).with_entities(Vote.confidence).all()
-        
-        if avg_confidence:
-            avg_conf = sum(conf[0] for conf in avg_confidence) / len(avg_confidence)
-        else:
-            avg_conf = 0
-        
-        return {
-            "total_votes": total_votes,
-            "yes_votes": yes_votes,
-            "no_votes": no_votes,
-            "average_confidence": round(avg_conf, 2)
-        }
-        
+        service = VoteService(db)
+        stats = await service.get_vote_statistics(current_user.id)
+        return VoteStatsResponse(**stats)
     except Exception as e:
-        print(f"❌ Get vote statistics error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@router.get("/prediction/{prediction_id}")
-async def get_prediction_votes(
-    prediction_id: str,
-    limit: int = Query(50, le=100),
-    offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get votes for a specific prediction"""
-    try:
-        votes = db.query(Vote).filter(
-            Vote.prediction_id == prediction_id
-        ).offset(offset).limit(limit).all()
-        
-        return [{
-            "id": vote.id,
-            "user_id": vote.user_id,
-            "vote": vote.vote,
-            "confidence": vote.confidence,
-            "created_at": vote.created_at.isoformat() if vote.created_at else None
-        } for vote in votes]
-        
-    except Exception as e:
-        print(f"❌ Get prediction votes error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        print(f"❌ Error fetching vote statistics: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching vote statistics: {str(e)}")
 
 @router.get("/user/{prediction_id}")
 async def get_user_vote_for_prediction(
     prediction_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-    """Get current user's vote for a specific prediction"""
+    """Get user's vote for a specific prediction"""
     try:
-        vote = db.query(Vote).filter(
-            Vote.prediction_id == prediction_id,
-            Vote.user_id == str(current_user.id)
-        ).first()
-        
-        if not vote:
-            return {"has_voted": False}
-        
-        return {
-            "has_voted": True,
-            "vote": vote.vote,
-            "confidence": vote.confidence,
-            "created_at": vote.created_at.isoformat() if vote.created_at else None,
-            "updated_at": vote.updated_at.isoformat() if vote.updated_at else None
-        }
-        
+        service = VoteService(db)
+        vote = await service.get_user_vote_for_prediction(current_user.id, prediction_id)
+        return vote
     except Exception as e:
-        print(f"❌ Get user vote error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        print(f"❌ Error getting user vote: {str(e)}")
+        return None
 
-# Health check endpoint
-@router.get("/health")
-async def votes_health():
-    """Health check endpoint for votes router"""
-    return {"status": "ok", "router": "votes", "endpoints_available": True}
+@router.get("/prediction/{prediction_id}")
+async def get_prediction_votes(
+    prediction_id: str,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db)
+):
+    """Get all votes for a specific prediction"""
+    try:
+        service = VoteService(db)
+        result = await service.get_prediction_votes(prediction_id, limit, offset)
+        return result
+    except Exception as e:
+        print(f"❌ Error fetching prediction votes: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching prediction votes: {str(e)}")
+
+@router.put("/{vote_id}")
+async def update_vote(
+    vote_id: str,
+    vote: bool,
+    confidence: int = Query(..., ge=0, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update an existing vote (only allowed on active predictions)"""
+    try:
+        service = VoteService(db)
+        result = await service.update_vote(vote_id, current_user.id, vote, confidence)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating vote: {str(e)}")
+
+@router.delete("/{vote_id}")
+async def delete_vote(
+    vote_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a vote (only allowed on active predictions)"""
+    try:
+        service = VoteService(db)
+        success = await service.delete_vote(vote_id, current_user.id)
+        if success:
+            return {"message": "Vote deleted successfully"}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to delete vote")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting vote: {str(e)}")

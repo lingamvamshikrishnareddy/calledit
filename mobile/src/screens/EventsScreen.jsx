@@ -1,4 +1,4 @@
-// src/screens/EventsScreen.jsx - FIXED
+// src/screens/EventsScreen.jsx - UPDATED: Cyberpunk color scheme
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -17,13 +17,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import PredictionCard from '../components/feed/PredictionCard';
 import ApiService from '../services/api';
-import AuthService from '../services/auth';
-import { useAuth } from '../hooks/useAuth'; // ADDED: Use auth hook
+
+import { useAuth } from '../hooks/useAuth';
 
 const { width } = Dimensions.get('window');
 
 const EventsScreen = ({ navigation }) => {
-  // FIXED: Use auth hook instead of direct AuthService calls
   const { user, isAuthenticated, loading: authLoading } = useAuth();
   
   const [searchQuery, setSearchQuery] = useState('');
@@ -34,21 +33,23 @@ const EventsScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  // FIXED: Only load data when auth is ready and user exists
+  // FIXED: Load data when auth is ready
   useEffect(() => {
     if (!authLoading && isAuthenticated && user) {
       console.log('📱 EventsScreen: User authenticated, loading data...');
       loadInitialData();
     } else if (!authLoading && !isAuthenticated) {
       console.log('❌ EventsScreen: User not authenticated');
-      // Clear data when not authenticated
       setPredictions([]);
       setCategories([]);
       setError('Please login to view predictions');
     }
   }, [authLoading, isAuthenticated, user]);
 
+  // FIXED: Filter predictions whenever dependencies change
   useEffect(() => {
     filterPredictions();
   }, [searchQuery, selectedCategory, predictions]);
@@ -65,7 +66,7 @@ const EventsScreen = ({ navigation }) => {
     try {
       console.log('📱 EventsScreen: Loading initial data...');
       await Promise.all([
-        loadPredictions(),
+        loadPredictions(true), // Reset data
         loadCategories()
       ]);
       console.log('✅ EventsScreen: Initial data loaded successfully');
@@ -77,15 +78,41 @@ const EventsScreen = ({ navigation }) => {
     }
   };
 
-  const loadPredictions = async () => {
+  const loadPredictions = async (reset = false) => {
     try {
-      console.log('📊 EventsScreen: Loading predictions...');
+      const offset = reset ? 0 : predictions.length;
+      console.log('📊 EventsScreen: Loading predictions...', { offset, reset });
+      
+      // FIXED: Load more predictions with proper pagination
       const data = await ApiService.getPredictions({ 
         status: 'active', 
-        limit: 50 
+        limit: 20,
+        offset: offset
       });
+      
       console.log('📊 EventsScreen: Predictions loaded:', data?.length || 0);
-      setPredictions(Array.isArray(data) ? data : []);
+      
+      if (!Array.isArray(data)) {
+        console.warn('⚠️ EventsScreen: API returned non-array data:', data);
+        setHasMore(false);
+        return;
+      }
+
+      // FIXED: Handle data properly for reset vs append
+      if (reset) {
+        setPredictions(data);
+      } else {
+        setPredictions(prev => {
+          // Remove duplicates
+          const existingIds = new Set(prev.map(p => p.id));
+          const newPredictions = data.filter(p => !existingIds.has(p.id));
+          return [...prev, ...newPredictions];
+        });
+      }
+      
+      // Update hasMore based on returned data
+      setHasMore(data.length >= 20);
+      
     } catch (err) {
       console.error('❌ EventsScreen: Error loading predictions:', err);
       throw new Error('Failed to load predictions: ' + err.message);
@@ -126,11 +153,14 @@ const EventsScreen = ({ navigation }) => {
 
     let filtered = [...predictions];
 
-    // Filter by category
+    // FIXED: Filter by category properly
     if (selectedCategory !== 'all') {
       filtered = filtered.filter(p => {
         if (!p.category) return false;
-        return p.category.id === selectedCategory || p.category.slug === selectedCategory;
+        // Match by both ID and slug for flexibility
+        return p.category.id === selectedCategory || 
+               p.category.slug === selectedCategory ||
+               p.category_id === selectedCategory;
       });
     }
 
@@ -140,11 +170,35 @@ const EventsScreen = ({ navigation }) => {
       filtered = filtered.filter(p => 
         p.title?.toLowerCase().includes(query) ||
         p.description?.toLowerCase().includes(query) ||
-        p.creator?.username?.toLowerCase().includes(query)
+        p.creator?.username?.toLowerCase().includes(query) ||
+        p.creator?.display_name?.toLowerCase().includes(query)
       );
     }
 
+    console.log('🔍 EventsScreen: Filtered predictions:', {
+      total: predictions.length,
+      filtered: filtered.length,
+      category: selectedCategory,
+      search: searchQuery
+    });
+
     setFilteredPredictions(filtered);
+  };
+
+  // FIXED: Handle category selection
+  const handleCategoryChange = async (categoryId) => {
+    console.log('📂 EventsScreen: Category changed to:', categoryId);
+    setSelectedCategory(categoryId);
+    
+    // If switching to "all", make sure we have enough data
+    if (categoryId === 'all' && predictions.length < 20) {
+      setLoading(true);
+      try {
+        await loadPredictions(true);
+      } finally {
+        setLoading(false);
+      }
+    }
   };
 
   const onRefresh = useCallback(async () => {
@@ -157,6 +211,25 @@ const EventsScreen = ({ navigation }) => {
       setRefreshing(false);
     }
   }, [isAuthenticated, user]);
+
+  // FIXED: Load more data when reaching end
+  const handleLoadMore = async () => {
+    if (isLoadingMore || !hasMore || loading) return;
+    
+    // Only load more for "all" category or when no search is active
+    if (selectedCategory !== 'all' || searchQuery.trim()) {
+      return;
+    }
+
+    setIsLoadingMore(true);
+    try {
+      await loadPredictions(false);
+    } catch (err) {
+      console.error('❌ EventsScreen: Error loading more predictions:', err);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
 
   const handlePredictionPress = (prediction) => {
     if (!prediction?.id) {
@@ -171,38 +244,37 @@ const EventsScreen = ({ navigation }) => {
     });
   };
 
- const handleVote = async (voteData) => {
-  if (!isAuthenticated || !user) {
-    Alert.alert(
-      'Login Required',
-      'Please login to vote on predictions',
-      [
-        { text: 'Cancel' },
-        { text: 'Login', onPress: () => navigation.navigate('Auth') }
-      ]
-    );
-    return;
-  }
+  const handleVote = async (voteData) => {
+    if (!isAuthenticated || !user) {
+      Alert.alert(
+        'Login Required',
+        'Please login to vote on predictions',
+        [
+          { text: 'Cancel' },
+          { text: 'Login', onPress: () => navigation.navigate('Auth') }
+        ]
+      );
+      return;
+    }
 
-  try {
-    console.log('🗳️ EventsScreen: Casting vote:', voteData);
-    
-    // FIXED: Ensure correct data structure
-    await ApiService.castVote({
-      prediction_id: voteData.prediction_id,
-      vote: voteData.vote,
-      confidence: voteData.confidence || 75
-    });
-    
-    // Refresh predictions to show updated vote counts
-    await loadPredictions();
-    
-    Alert.alert('Success!', `Your ${voteData.vote ? 'YES' : 'NO'} vote has been recorded!`);
-  } catch (err) {
-    console.error('❌ EventsScreen: Vote submission error:', err);
-    Alert.alert('Error', err.message || 'Failed to submit vote');
-  }
-};
+    try {
+      console.log('🗳️ EventsScreen: Casting vote:', voteData);
+      
+      await ApiService.castVote({
+        prediction_id: voteData.prediction_id,
+        vote: voteData.vote,
+        confidence: voteData.confidence || 75
+      });
+      
+      // Refresh predictions to show updated vote counts
+      await loadPredictions(true);
+      
+      Alert.alert('Success!', `Your ${voteData.vote ? 'YES' : 'NO'} vote has been recorded!`);
+    } catch (err) {
+      console.error('❌ EventsScreen: Vote submission error:', err);
+      Alert.alert('Error', err.message || 'Failed to submit vote');
+    }
+  };
 
   const renderSearchBar = () => (
     <View style={styles.searchContainer}>
@@ -239,7 +311,7 @@ const EventsScreen = ({ navigation }) => {
               styles.categoryButton,
               selectedCategory === category.id && styles.selectedCategory
             ]}
-            onPress={() => setSelectedCategory(category.id)}
+            onPress={() => handleCategoryChange(category.id)}
           >
             <Text style={[
               styles.categoryText,
@@ -263,7 +335,7 @@ const EventsScreen = ({ navigation }) => {
 
   const renderTrendingSection = () => {
     const trendingPredictions = filteredPredictions
-      .filter(p => p.total_votes > 0) // Only show predictions with votes
+      .filter(p => p.total_votes > 0)
       .sort((a, b) => (b.total_votes || 0) - (a.total_votes || 0))
       .slice(0, 3);
 
@@ -271,13 +343,10 @@ const EventsScreen = ({ navigation }) => {
 
     return (
       <View style={styles.trendingSection}>
-        <LinearGradient
-          colors={['#FF69B4', '#FF1493']}
-          style={styles.trendingHeader}
-        >
+        <View style={styles.trendingHeader}>
           <Text style={styles.trendingTitle}>🚀 Trending Now</Text>
           <Text style={styles.trendingSubtitle}>Most voted this week</Text>
-        </LinearGradient>
+        </View>
         
         <ScrollView 
           horizontal 
@@ -323,6 +392,17 @@ const EventsScreen = ({ navigation }) => {
     />
   );
 
+  const renderFooter = () => {
+    if (!isLoadingMore) return null;
+    
+    return (
+      <View style={styles.loadingMore}>
+        <ActivityIndicator size="small" color="#f60976" />
+        <Text style={styles.loadingMoreText}>Loading more predictions...</Text>
+      </View>
+    );
+  };
+
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
       <Ionicons name="search-outline" size={64} color="#666" />
@@ -362,22 +442,22 @@ const EventsScreen = ({ navigation }) => {
 
   const renderLoadingIndicator = () => (
     <View style={styles.loadingContainer}>
-      <ActivityIndicator size="large" color="#FF69B4" />
+      <ActivityIndicator size="large" color="#f60976" />
       <Text style={styles.loadingText}>Loading predictions...</Text>
     </View>
   );
 
-  // FIXED: Better loading state handling
+  // Auth loading state
   if (authLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#FF69B4" />
+        <ActivityIndicator size="large" color="#f60976" />
         <Text style={styles.loadingText}>Checking authentication...</Text>
       </View>
     );
   }
 
-  // FIXED: Better auth required state
+  // Auth required state
   if (!isAuthenticated || !user) {
     return (
       <View style={styles.authRequiredContainer}>
@@ -415,9 +495,11 @@ const EventsScreen = ({ navigation }) => {
               <RefreshControl 
                 refreshing={refreshing} 
                 onRefresh={onRefresh}
-                colors={['#FF69B4']}
+                colors={['#f60976']}
               />
             }
+            onEndReached={handleLoadMore}
+            onEndReachedThreshold={0.1}
             ListHeaderComponent={
               <>
                 {renderCategories()}
@@ -431,6 +513,7 @@ const EventsScreen = ({ navigation }) => {
                 )}
               </>
             }
+            ListFooterComponent={renderFooter}
             ListEmptyComponent={!loading ? renderEmptyState : null}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={[
@@ -513,8 +596,8 @@ const styles = StyleSheet.create({
     borderColor: '#333',
   },
   selectedCategory: {
-    backgroundColor: '#FF69B4',
-    borderColor: '#FF69B4',
+    backgroundColor: '#f60976',
+    borderColor: '#f60976',
   },
   categoryText: {
     fontSize: 14,
@@ -545,6 +628,7 @@ const styles = StyleSheet.create({
     padding: 20,
     borderRadius: 15,
     marginBottom: 15,
+    backgroundColor: '#f60976',
   },
   trendingTitle: {
     fontSize: 20,
@@ -572,7 +656,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -5,
     right: -5,
-    backgroundColor: '#FF69B4',
+    backgroundColor: '#f60976',
     width: 24,
     height: 24,
     borderRadius: 12,
@@ -615,6 +699,17 @@ const styles = StyleSheet.create({
   emptyContent: {
     flex: 1,
   },
+  loadingMore: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+  },
+  loadingMoreText: {
+    marginLeft: 10,
+    fontSize: 14,
+    color: '#ccc',
+  },
   emptyState: {
     flex: 1,
     justifyContent: 'center',
@@ -637,7 +732,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   clearSearchButton: {
-    backgroundColor: '#FF69B4',
+    backgroundColor: '#f60976',
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 20,
@@ -649,7 +744,7 @@ const styles = StyleSheet.create({
     color: '#000',
   },
   retryButton: {
-    backgroundColor: '#FF69B4',
+    backgroundColor: '#f60976',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 20,
@@ -692,7 +787,7 @@ const styles = StyleSheet.create({
     marginBottom: 30,
   },
   loginButton: {
-    backgroundColor: '#FF69B4',
+    backgroundColor: '#f60976',
     paddingHorizontal: 40,
     paddingVertical: 15,
     borderRadius: 25,
