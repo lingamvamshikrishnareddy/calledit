@@ -1,4 +1,4 @@
-// services/api.js - Clean and optimized API service
+// services/api.js - FIXED: Added balance refresh and user data sync
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import axios from 'axios';
@@ -355,6 +355,28 @@ class ApiService {
     return response.data;
   }
 
+  // FIXED: Add method to refresh user data with latest balance
+  async refreshUserData() {
+    await this.ensureInitialized();
+    try {
+      console.log('🔄 Refreshing user data from server...');
+      const response = await this.api.get('/api/auth/me');
+      
+      // Update cached user data
+      await AsyncStorage.setItem('@auth/user_data', JSON.stringify(response.data));
+      
+      console.log('✅ User data refreshed:', {
+        username: response.data.username,
+        points: response.data.total_points
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error('❌ Failed to refresh user data:', error);
+      throw error;
+    }
+  }
+
   // Vote endpoints
   async castVote(voteData) {
     await this.ensureInitialized();
@@ -373,15 +395,20 @@ class ApiService {
       throw new Error('Vote value is required');
     }
 
+    console.log('🗳️ Casting vote:', apiVoteData);
     const response = await this.api.post('/api/votes/', apiVoteData);
+    console.log('✅ Vote response:', response.data);
+    
     return response.data;
   }
 
   async getMyVotes(limit = 50, offset = 0) {
     await this.ensureInitialized();
+    console.log(`📊 Fetching votes: limit=${limit}, offset=${offset}`);
     const response = await this.api.get('/api/votes/my-votes', {
       params: { limit, offset }
     });
+    console.log(`✅ Received ${response.data?.length || 0} votes`);
     return response.data || [];
   }
 
@@ -475,10 +502,28 @@ class ApiService {
   async getPointsBalance() {
     await this.ensureInitialized();
     try {
+      console.log('💰 Fetching points balance...');
       const response = await this.api.get('/api/points/balance');
-      return response.data.balance;
+      const balance = response.data?.balance || 0;
+      console.log(`✅ Current balance: ${balance}`);
+      return balance;
     } catch (error) {
+      console.error('❌ Failed to fetch balance:', error);
       return 0;
+    }
+  }
+
+  // FIXED: Add method to get full user stats including balance
+  async getUserStats() {
+    await this.ensureInitialized();
+    try {
+      console.log('📊 Fetching user stats...');
+      const response = await this.api.get('/api/points/stats');
+      console.log('✅ User stats:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Failed to fetch user stats:', error);
+      throw error;
     }
   }
 

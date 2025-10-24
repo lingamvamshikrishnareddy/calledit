@@ -15,9 +15,10 @@ import { useAuth } from '../hooks/useAuth';
 import { usePredictions } from '../hooks/usePredictions';
 import { useVotes } from '../hooks/useVotes';
 import PredictionCard from '../components/feed/PredictionCard';
+import ApiService from '../services/api';
 
 const HomeScreen = () => {
-  const { user, logout, isAuthenticated, loading: authLoading } = useAuth();
+  const { user, logout, isAuthenticated, loading: authLoading, refreshUser } = useAuth();
   const { 
     predictions, 
     loading: predictionsLoading, 
@@ -29,38 +30,56 @@ const HomeScreen = () => {
   const { castVote, loading: voteLoading } = useVotes();
   
   const [refreshing, setRefreshing] = useState(false);
-  const [userVotes, setUserVotes] = useState(new Map()); // Track user votes
+  const [userVotes, setUserVotes] = useState(new Map());
+  const [currentBalance, setCurrentBalance] = useState(0);
 
-  // Initial data load
+  // FIXED: Load user balance when component mounts
   useEffect(() => {
     if (isAuthenticated && user) {
       console.log('🏠 HomeScreen initial user:', user.username);
+      loadUserBalance();
       fetchPredictions();
     }
-  }, [isAuthenticated, user, fetchPredictions]);
+  }, [isAuthenticated, user]);
 
-  // Log auth changes
+  // FIXED: Update balance when user changes
   useEffect(() => {
-    console.log('🏠 Auth state in HomeScreen:', {
-      isAuthenticated,
-      user: user?.username || 'No user',
-      loading: authLoading
-    });
-  }, [isAuthenticated, user, authLoading]);
+    if (user) {
+      setCurrentBalance(user.total_points || 0);
+    }
+  }, [user]);
+
+  const loadUserBalance = async () => {
+    try {
+      const balanceData = await ApiService.getPointsBalance();
+      console.log('💰 Loaded balance:', balanceData);
+      setCurrentBalance(balanceData);
+    } catch (error) {
+      console.error('❌ Failed to load balance:', error);
+      // Fallback to user object balance
+      if (user) {
+        setCurrentBalance(user.total_points || 0);
+      }
+    }
+  };
 
   const handleRefresh = useCallback(async () => {
     if (refreshing || authLoading) return;
     
     setRefreshing(true);
     try {
-      await refreshPredictions();
+      // FIXED: Refresh both user data and predictions
+      await Promise.all([
+        refreshUser ? refreshUser() : loadUserBalance(),
+        refreshPredictions()
+      ]);
     } catch (error) {
       console.error('❌ Refresh failed:', error);
       Alert.alert('Error', 'Failed to refresh data');
     } finally {
       setRefreshing(false);
     }
-  }, [refreshing, authLoading, refreshPredictions]);
+  }, [refreshing, authLoading, refreshPredictions, refreshUser]);
 
   const handleVote = useCallback(async (voteData) => {
     if (!user || !isAuthenticated) {
@@ -81,16 +100,29 @@ const HomeScreen = () => {
       const result = await castVote(voteData);
       console.log('✅ Vote successful:', result);
 
-      // Update local state to reflect the vote
+      // FIXED: Update local state to reflect the vote
       setUserVotes(prev => new Map(prev).set(voteData.prediction_id, voteData.vote));
+
+      // FIXED: Update balance immediately from vote result
+      if (result.new_balance !== undefined) {
+        setCurrentBalance(result.new_balance);
+        console.log('💰 Updated balance after vote:', result.new_balance);
+      }
 
       // Refresh predictions to get updated counts
       await refreshPredictions();
 
+      // FIXED: Refresh user data to sync with backend
+      if (refreshUser) {
+        await refreshUser();
+      } else {
+        await loadUserBalance();
+      }
+
       // Show success message
       Alert.alert(
         'Vote Recorded!', 
-        `Your ${voteData.vote ? 'YES' : 'NO'} vote has been recorded.`,
+        `Your ${voteData.vote ? 'YES' : 'NO'} vote has been recorded.\nNew balance: ${result.new_balance || currentBalance} points`,
         [{ text: 'OK' }]
       );
 
@@ -104,11 +136,16 @@ const HomeScreen = () => {
         errorMessage = 'Your session has expired. Please log out and log back in.';
       } else if (error.message.includes('closed')) {
         errorMessage = 'Voting has closed for this prediction.';
+      } else if (error.message.includes('Insufficient points')) {
+        errorMessage = error.message;
       }
 
       Alert.alert('Vote Failed', errorMessage);
+      
+      // Refresh balance in case of error
+      await loadUserBalance();
     }
-  }, [user, isAuthenticated, voteLoading, castVote, refreshPredictions]);
+  }, [user, isAuthenticated, voteLoading, castVote, refreshPredictions, refreshUser, currentBalance]);
 
   const handleLogout = useCallback(() => {
     Alert.alert(
@@ -125,7 +162,6 @@ const HomeScreen = () => {
           onPress: async () => {
             try {
               await logout();
-              // Navigation will be handled automatically by auth state change
             } catch (error) {
               console.error('❌ Logout error:', error);
               Alert.alert('Error', 'Logout failed. Please try again.');
@@ -157,11 +193,10 @@ const HomeScreen = () => {
                   <Text style={styles.usernameText}>
                     {user?.display_name || user?.username || 'User'}
                   </Text>
-                  {user && (
-                    <Text style={styles.pointsText}>
-                      🏆 {user.total_points || 0} points
-                    </Text>
-                  )}
+                  {/* FIXED: Show live balance */}
+                  <Text style={styles.pointsText}>
+                    🏆 {currentBalance.toLocaleString()} points
+                  </Text>
                 </View>
               </View>
               
@@ -236,7 +271,7 @@ const HomeScreen = () => {
     // Add user vote status to prediction
     const predictionWithVote = {
       ...item,
-      user_vote: userVotes.get(item.id)
+      user_vote: userVotes.get(item.id) !== undefined ? userVotes.get(item.id) : item.user_vote
     };
 
     return (
@@ -245,16 +280,14 @@ const HomeScreen = () => {
         prediction={predictionWithVote} 
         onVote={handleVote}
         onPress={() => {
-          // Navigate to prediction details
           console.log('🔍 Opening prediction:', item.id);
         }}
-        currentUser={user} // Pass current user to show/hide vote buttons
+        currentUser={user}
         disabled={voteLoading}
       />
     );
   };
 
-  // Generate unique key for each item
   const getItemKey = (item, index) => {
     const baseKey = `${item.id || index}`;
     const timestampKey = item.created_at || item.updated_at || Date.now();
@@ -262,7 +295,6 @@ const HomeScreen = () => {
     return uniqueKey;
   };
 
-  // Clean predictions data to ensure unique IDs
   const getCleanedPredictions = useCallback(() => {
     if (!predictions || !Array.isArray(predictions)) {
       return [];

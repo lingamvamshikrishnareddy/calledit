@@ -1,6 +1,6 @@
-# app/services/vote_service.py - FIXED: Timezone handling for datetime comparisons
+# app/services/vote_service.py - FIXED: Proper vote count updates
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import and_, desc
+from sqlalchemy import and_, desc, func
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 import uuid
@@ -26,10 +26,8 @@ class VoteService:
         
         if isinstance(dt, datetime):
             if dt.tzinfo is None:
-                # Naive datetime - assume UTC
                 return dt.replace(tzinfo=timezone.utc)
             else:
-                # Already timezone-aware - convert to UTC
                 return dt.astimezone(timezone.utc)
         
         return dt
@@ -38,9 +36,20 @@ class VoteService:
         """Get current UTC time as timezone-aware datetime"""
         return datetime.now(timezone.utc)
 
+    def _calculate_minority_bonus_multiplier(self, user_vote: bool, yes_percentage: float) -> float:
+        """Calculate minority bonus multiplier based on vote distribution"""
+        user_side_percentage = yes_percentage if user_vote else (100 - yes_percentage)
+        
+        if user_side_percentage < 20:
+            return 1.0  # +1× bonus (3× total payout)
+        elif user_side_percentage < 40:
+            return 0.5  # +0.5× bonus (2.5× total payout)
+        else:
+            return 0.0  # No bonus (2× base payout)
+
     async def cast_vote(self, user_id: str, prediction_id: str, vote: bool, 
                        confidence: int = 75, stake_amount: int = 10) -> Dict[str, Any]:
-        """Cast a vote with points deduction - FIXED timezone handling"""
+        """Cast a vote with points deduction"""
         
         logger.info(f"Attempting to cast vote: user={user_id}, prediction={prediction_id}, vote={vote}")
         
@@ -52,7 +61,6 @@ class VoteService:
         
         logger.info(f"User {user.username} has {user.total_points} points, needs {stake_amount}")
         
-        # Check if user has enough points
         if user.total_points < stake_amount:
             raise ValueError(f"Insufficient points. You have {user.total_points} but need {stake_amount}")
         
@@ -70,12 +78,10 @@ class VoteService:
             logger.error(f"Prediction {prediction_id} status is {prediction.status}, not active")
             raise ValueError("This prediction is no longer accepting votes")
         
-        # FIXED: Check if voting is still open with proper timezone handling
+        # Check if voting is still open
         if prediction.closes_at:
             current_time = self._get_current_utc_time()
             closes_at_normalized = self._normalize_datetime(prediction.closes_at)
-            
-            logger.info(f"Checking voting deadline: current={current_time}, closes_at={closes_at_normalized}")
             
             if closes_at_normalized and closes_at_normalized <= current_time:
                 logger.error(f"Prediction {prediction_id} closed at {closes_at_normalized}")
@@ -95,7 +101,7 @@ class VoteService:
             user.total_points -= stake_amount
             user.total_staked = (user.total_staked or 0) + stake_amount
             
-            # Create vote with all required fields
+            # Create vote
             vote_data = {
                 'user_id': user_id,
                 'prediction_id': prediction_id,
@@ -103,13 +109,24 @@ class VoteService:
                 'confidence': confidence,
                 'points_wagered': stake_amount,
                 'points_spent': stake_amount,
-                'points_earned': 0,  # Will be set when resolved
+                'points_earned': 0,
                 'is_resolved': False,
                 'is_correct': None,
             }
             
             new_vote = self.vote_controller.create_vote(vote_data)
             logger.info(f"Vote created with ID: {new_vote.id}")
+            
+            # FIXED: Update prediction vote counts IMMEDIATELY using direct DB query
+            if vote:  # YES vote
+                prediction.yes_votes = (prediction.yes_votes or 0) + 1
+            else:  # NO vote
+                prediction.no_votes = (prediction.no_votes or 0) + 1
+            
+            prediction.total_votes = prediction.yes_votes + prediction.no_votes
+            prediction.updated_at = self._get_current_utc_time()
+            
+            logger.info(f"Updated prediction {prediction_id} vote counts: Yes={prediction.yes_votes}, No={prediction.no_votes}")
             
             # Record points transaction
             transaction = PointsTransaction(
@@ -126,10 +143,7 @@ class VoteService:
             self.db.add(transaction)
             self.db.commit()
             
-            logger.info(f"Points transaction recorded: -{stake_amount} points")
-            
-            # Update prediction vote counts
-            await self._update_prediction_vote_counts(prediction_id)
+            logger.info(f"✅ Vote successfully cast and committed to DB")
             
             return {
                 'id': str(new_vote.id),
@@ -143,7 +157,10 @@ class VoteService:
                 'message': f"Your {'YES' if vote else 'NO'} vote has been recorded!",
                 'prediction': {
                     'title': prediction.title,
-                    'description': prediction.description
+                    'description': prediction.description,
+                    'yes_votes': prediction.yes_votes,
+                    'no_votes': prediction.no_votes,
+                    'total_votes': prediction.total_votes
                 }
             }
             
@@ -152,18 +169,45 @@ class VoteService:
             self.db.rollback()
             raise Exception(f"Failed to cast vote: {str(e)}")
 
+    async def _update_prediction_vote_counts(self, prediction_id: str):
+        """Update vote counts on prediction from actual DB counts"""
+        try:
+            prediction = self.db.query(Prediction).filter(Prediction.id == prediction_id).first()
+            if not prediction:
+                return
+
+            # FIXED: Count actual votes from database
+            yes_count = self.db.query(func.count(Vote.id)).filter(
+                and_(Vote.prediction_id == prediction_id, Vote.vote == True)
+            ).scalar() or 0
+
+            no_count = self.db.query(func.count(Vote.id)).filter(
+                and_(Vote.prediction_id == prediction_id, Vote.vote == False)
+            ).scalar() or 0
+
+            prediction.yes_votes = yes_count
+            prediction.no_votes = no_count
+            prediction.total_votes = yes_count + no_count
+            prediction.updated_at = self._get_current_utc_time()
+
+            self.db.commit()
+            logger.info(f"✅ Recalculated vote counts for prediction {prediction_id}: Yes={yes_count}, No={no_count}, Total={yes_count + no_count}")
+
+        except Exception as e:
+            logger.error(f"Error updating vote counts: {str(e)}")
+            self.db.rollback()
+
     async def get_user_votes(
         self, 
         user_id: str, 
         limit: int = 50, 
         offset: int = 0
     ) -> List[Dict[str, Any]]:
-        """Get user's votes with predictions - FIXED timezone handling"""
+        """Get user's votes with predictions"""
         
         try:
             logger.info(f"Getting votes for user {user_id}, limit={limit}, offset={offset}")
             
-            # Use joinedload to eagerly load prediction data
             votes = (self.db.query(Vote)
                     .options(joinedload(Vote.prediction).joinedload(Prediction.creator))
                     .filter(Vote.user_id == user_id)
@@ -176,7 +220,6 @@ class VoteService:
             
             formatted_votes = []
             for vote in votes:
-                # Determine if resolved and correct
                 is_resolved = (vote.prediction and 
                              vote.prediction.status == "resolved" and 
                              vote.prediction.resolution is not None)
@@ -186,26 +229,9 @@ class VoteService:
                 
                 if is_resolved:
                     is_correct = (vote.vote == vote.prediction.resolution)
-                    if is_correct and vote.points_earned == 0:
-                        # Calculate points if not already set
-                        points_earned = (vote.points_wagered or vote.points_spent or 10) * 2
                 
-                # FIXED: Safe datetime handling
-                created_at_str = None
-                if vote.created_at:
-                    try:
-                        created_at_str = vote.created_at.isoformat()
-                    except:
-                        created_at_str = self._get_current_utc_time().isoformat()
-                else:
-                    created_at_str = self._get_current_utc_time().isoformat()
-
-                updated_at_str = None
-                if vote.updated_at:
-                    try:
-                        updated_at_str = vote.updated_at.isoformat()
-                    except:
-                        updated_at_str = None
+                created_at_str = vote.created_at.isoformat() if vote.created_at else self._get_current_utc_time().isoformat()
+                updated_at_str = vote.updated_at.isoformat() if vote.updated_at else None
                 
                 vote_data = {
                     'id': str(vote.id),
@@ -218,8 +244,6 @@ class VoteService:
                     'is_correct': is_correct,
                     'created_at': created_at_str,
                     'updated_at': updated_at_str,
-                    
-                    # Prediction data
                     'prediction': {
                         'id': str(vote.prediction.id),
                         'title': vote.prediction.title,
@@ -256,13 +280,115 @@ class VoteService:
         except:
             return None
 
+    async def resolve_prediction_votes(self, prediction_id: str, resolution: bool) -> Dict[str, Any]:
+        """Resolve all votes for a prediction with 2× base + minority bonus"""
+        logger.info(f"Resolving votes for prediction {prediction_id}, resolution={resolution}")
+        
+        try:
+            prediction = self.db.query(Prediction).filter(Prediction.id == prediction_id).first()
+            if not prediction:
+                raise ValueError("Prediction not found")
+            
+            votes = (self.db.query(Vote)
+                    .filter(Vote.prediction_id == prediction_id)
+                    .all())
+            
+            if not votes:
+                logger.warning(f"No votes found for prediction {prediction_id}")
+                return {
+                    'total_votes': 0,
+                    'winners': 0,
+                    'losers': 0,
+                    'total_payout': 0
+                }
+            
+            total_votes = len(votes)
+            yes_votes = sum(1 for v in votes if v.vote)
+            no_votes = total_votes - yes_votes
+            yes_percentage = (yes_votes / total_votes * 100) if total_votes > 0 else 50
+            
+            logger.info(f"Vote distribution: {yes_votes} YES ({yes_percentage:.1f}%), {no_votes} NO ({100-yes_percentage:.1f}%)")
+            
+            winners = 0
+            losers = 0
+            total_payout = 0
+            
+            for vote in votes:
+                if vote.is_resolved:
+                    continue
+                
+                vote.is_resolved = True
+                vote.is_correct = (vote.vote == resolution)
+                vote.resolved_at = self._get_current_utc_time()
+                
+                stake = vote.points_wagered or vote.points_spent or 10
+                
+                if vote.is_correct:
+                    base_payout = stake * 2
+                    bonus_multiplier = self._calculate_minority_bonus_multiplier(vote.vote, yes_percentage)
+                    bonus_payout = int(stake * bonus_multiplier)
+                    vote.points_earned = base_payout + bonus_payout
+                    
+                    user = self.db.query(User).filter(User.id == vote.user_id).first()
+                    if user:
+                        user.total_points += vote.points_earned
+                        user.total_won = (user.total_won or 0) + vote.points_earned
+                        user.predictions_correct += 1
+                        user.current_streak += 1
+                        if user.current_streak > user.longest_streak:
+                            user.longest_streak = user.current_streak
+                    
+                    bonus_text = f" (including {bonus_multiplier}× minority bonus)" if bonus_multiplier > 0 else ""
+                    transaction = PointsTransaction(
+                        id=str(uuid.uuid4()),
+                        user_id=vote.user_id,
+                        transaction_type=TransactionType.PREDICTION_WIN.value,
+                        amount=vote.points_earned,
+                        balance_after=user.total_points if user else 0,
+                        prediction_id=prediction_id,
+                        description=f"Won {vote.points_earned} points (2× base + {bonus_multiplier}× bonus){bonus_text}",
+                        created_at=self._get_current_utc_time()
+                    )
+                    self.db.add(transaction)
+                    
+                    winners += 1
+                    total_payout += vote.points_earned
+                    
+                else:
+                    vote.points_earned = 0
+                    user = self.db.query(User).filter(User.id == vote.user_id).first()
+                    if user:
+                        user.current_streak = 0
+                    
+                    losers += 1
+            
+            self.db.commit()
+            
+            result = {
+                'total_votes': total_votes,
+                'yes_votes': yes_votes,
+                'no_votes': no_votes,
+                'yes_percentage': yes_percentage,
+                'winners': winners,
+                'losers': losers,
+                'total_payout': total_payout,
+                'resolution': 'YES' if resolution else 'NO'
+            }
+            
+            logger.info(f"Resolution complete: {result}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error resolving votes: {str(e)}")
+            self.db.rollback()
+            raise Exception(f"Failed to resolve votes: {str(e)}")
+
     async def get_vote_statistics(self, user_id: str) -> Dict[str, Any]:
-        """Get voting statistics for user - FIXED timezone handling"""
+        """Get voting statistics for user"""
         
         try:
             logger.info(f"Getting vote statistics for user {user_id}")
             
-            # Get all votes for user with prediction data
             votes = (self.db.query(Vote)
                     .options(joinedload(Vote.prediction))
                     .filter(Vote.user_id == user_id)
@@ -283,20 +409,16 @@ class VoteService:
             correct_votes = [v for v in resolved_votes 
                            if v.vote == v.prediction.resolution]
             
-            # Calculate statistics
             total_resolved = len(resolved_votes)
             correct_count = len(correct_votes)
             win_rate = (correct_count / total_resolved * 100) if total_resolved > 0 else 0
             
-            # Calculate confidence average
             total_confidence = sum(v.confidence or 75 for v in votes)
             avg_confidence = (total_confidence / total_votes) if total_votes > 0 else 0
             
-            # Calculate points
             total_points_spent = sum(v.points_wagered or v.points_spent or 10 for v in votes)
             total_points_earned = sum(v.points_earned or 0 for v in votes)
             
-            # Get user for additional stats
             user = self.db.query(User).filter(User.id == user_id).first()
             
             stats = {
@@ -344,36 +466,6 @@ class VoteService:
             logger.error(f"Error getting user vote for prediction: {str(e)}")
             return None
 
-    async def _update_prediction_vote_counts(self, prediction_id: str):
-        """Update vote counts on prediction"""
-        try:
-            prediction = self.db.query(Prediction).filter(Prediction.id == prediction_id).first()
-            if not prediction:
-                return
-
-            # Count yes and no votes
-            yes_count = self.db.query(Vote).filter(
-                and_(Vote.prediction_id == prediction_id, Vote.vote == True)
-            ).count()
-
-            no_count = self.db.query(Vote).filter(
-                and_(Vote.prediction_id == prediction_id, Vote.vote == False)
-            ).count()
-
-            # Update prediction
-            prediction.yes_votes = yes_count
-            prediction.no_votes = no_count
-            prediction.total_votes = yes_count + no_count
-            prediction.updated_at = self._get_current_utc_time()
-
-            self.db.commit()
-            logger.info(f"Updated vote counts for prediction {prediction_id}: Yes={yes_count}, No={no_count}")
-
-        except Exception as e:
-            logger.error(f"Error updating vote counts: {str(e)}")
-            self.db.rollback()
-
-    # Additional methods remain the same...
     async def update_vote(self, vote_id: str, user_id: str, new_vote: bool, new_confidence: int) -> Dict[str, Any]:
         """Update an existing vote (only allowed on active predictions)"""
         
@@ -387,7 +479,6 @@ class VoteService:
         if vote.prediction.status != "active":
             raise ValueError("Cannot update vote on closed prediction")
 
-        # FIXED: Timezone-aware comparison
         if vote.prediction.closes_at:
             current_time = self._get_current_utc_time()
             closes_at_normalized = self._normalize_datetime(vote.prediction.closes_at)
@@ -428,7 +519,6 @@ class VoteService:
         if vote.prediction.status != "active":
             raise ValueError("Cannot delete vote on closed prediction")
 
-        # FIXED: Timezone-aware comparison
         if vote.prediction.closes_at:
             current_time = self._get_current_utc_time()
             closes_at_normalized = self._normalize_datetime(vote.prediction.closes_at)

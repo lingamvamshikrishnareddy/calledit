@@ -1,5 +1,6 @@
-# app/services/prediction_service.py - FIXED: Categories logic removed
+# app/services/prediction_service.py - FIXED: Real vote counts from DB
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timezone
 import logging
@@ -7,6 +8,7 @@ import logging
 from ..controllers.prediction_controller import PredictionController
 from ..models.prediction import Prediction, PredictionStatus
 from ..models.user import User
+from ..models.vote import Vote
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +25,12 @@ class PredictionService:
         limit: int = 20,
         offset: int = 0
     ) -> List[Dict[str, Any]]:
-        """Get predictions with user votes included"""
+        """Get predictions with user votes included and REAL vote counts from DB"""
         try:
-            # Map frontend status to backend status
             backend_status = self._map_frontend_status(status)
             
             logger.info(f"Getting predictions for user {user_id} with status: {status} -> {backend_status}")
             
-            # Get predictions with user votes
             predictions_with_votes = self.prediction_controller.get_predictions_with_user_votes(
                 user_id=user_id,
                 limit=limit,
@@ -50,7 +50,7 @@ class PredictionService:
                     if p['prediction'].category_id == category
                 ]
             
-            # Format for frontend
+            # Format for frontend with REAL vote counts
             formatted_predictions = []
             for item in predictions_with_votes:
                 prediction = item['prediction']
@@ -73,7 +73,6 @@ class PredictionService:
             if not prediction:
                 return None
             
-            # Get user's vote for this prediction
             user_vote = self.prediction_controller.get_user_vote_for_prediction(prediction_id, user_id)
             
             return await self._format_prediction_for_frontend(prediction, user_vote)
@@ -85,13 +84,8 @@ class PredictionService:
     async def create_prediction(self, prediction_data: Dict[str, Any], created_by: str) -> Dict[str, Any]:
         """Create new prediction"""
         try:
-            # Add creator to data
             prediction_data['created_by'] = created_by
-            
-            # Create prediction
             prediction = self.prediction_controller.create_prediction(prediction_data)
-            
-            # Format for frontend
             return await self._format_prediction_for_frontend(prediction, None)
             
         except Exception as e:
@@ -105,7 +99,6 @@ class PredictionService:
             
             formatted_predictions = []
             for prediction in predictions:
-                # Get user vote
                 user_vote = self.prediction_controller.get_user_vote_for_prediction(prediction.id, user_id)
                 formatted_pred = await self._format_prediction_for_frontend(prediction, user_vote)
                 formatted_predictions.append(formatted_pred)
@@ -207,10 +200,9 @@ class PredictionService:
         if not frontend_status:
             return None
         
-        # Map frontend status to backend PredictionStatus enum values
         status_mapping = {
             'active': 'active',
-            'open': 'active',  # Treat 'open' as 'active'
+            'open': 'active',
             'closed': 'closed',
             'resolved': 'resolved',
             'cancelled': 'cancelled'
@@ -218,9 +210,40 @@ class PredictionService:
         
         return status_mapping.get(frontend_status.lower(), frontend_status)
 
-    async def _format_prediction_for_frontend(self, prediction: Prediction, user_vote: Optional[bool]) -> Dict[str, Any]:
-        """Format prediction object for frontend consumption"""
+    def _get_real_vote_counts(self, prediction_id: str) -> tuple[int, int, int]:
+        """
+        FIXED: Get REAL vote counts directly from database
+        Returns (yes_votes, no_votes, total_votes)
+        """
         try:
+            # Count YES votes
+            yes_count = self.db.query(func.count(Vote.id)).filter(
+                Vote.prediction_id == prediction_id,
+                Vote.vote == True
+            ).scalar() or 0
+            
+            # Count NO votes
+            no_count = self.db.query(func.count(Vote.id)).filter(
+                Vote.prediction_id == prediction_id,
+                Vote.vote == False
+            ).scalar() or 0
+            
+            total = yes_count + no_count
+            
+            logger.info(f"📊 Real vote counts for {prediction_id}: YES={yes_count}, NO={no_count}, Total={total}")
+            
+            return yes_count, no_count, total
+            
+        except Exception as e:
+            logger.error(f"Error getting real vote counts for {prediction_id}: {str(e)}")
+            return 0, 0, 0
+
+    async def _format_prediction_for_frontend(self, prediction: Prediction, user_vote: Optional[bool]) -> Dict[str, Any]:
+        """Format prediction object for frontend consumption with REAL vote counts"""
+        try:
+            # FIXED: Get REAL vote counts from database
+            yes_votes, no_votes, total_votes = self._get_real_vote_counts(prediction.id)
+            
             # Safe attribute access with fallbacks
             category_data = None
             if hasattr(prediction, 'category') and prediction.category:
@@ -255,12 +278,7 @@ class PredictionService:
                 else:
                     created_at_iso = str(prediction.created_at)
 
-            # Ensure vote counts are integers
-            yes_votes = max(0, prediction.yes_votes or 0)
-            no_votes = max(0, prediction.no_votes or 0)
-            total_votes = yes_votes + no_votes
-
-            # Handle status field properly - don't access .value on strings
+            # Handle status field properly
             status_value = prediction.status
             if hasattr(prediction.status, 'value'):
                 status_value = prediction.status.value
@@ -276,6 +294,7 @@ class PredictionService:
                 'category': category_data,
                 'creator': creator_data,
                 'status': status_value,
+                # FIXED: Use REAL vote counts from database
                 'yes_votes': yes_votes,
                 'no_votes': no_votes,
                 'total_votes': total_votes,

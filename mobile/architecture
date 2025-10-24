@@ -45,6 +45,7 @@ called-it/
 │   ├── package.json
 │   ├── app.json
 │   └── App.jsx
+    |--eas.json
 │
 ├── backend/                         # FastAPI Backend
 │   ├── app/

@@ -1,61 +1,40 @@
 {
   "expo": {
-    "name": "Prediction App",
-    "slug": "prediction-app",
+    "name": "Called It",
+    "slug": "called-it",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "splash": {
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.yourcompany.predictionapp",
-      "buildNumber": "1.0.0",
-      "infoPlist": {
-        "LSApplicationQueriesSchemes": ["exp", "exps", "https"],
-        "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true,
-          "NSExceptionDomains": {
-            "exp.host": {
-              "NSExceptionAllowsInsecureHTTPLoads": true,
-              "NSExceptionMinimumTLSVersion": "1.0",
-              "NSExceptionRequiresForwardSecrecy": false
-            },
-            "ngrok.io": {
-              "NSExceptionAllowsInsecureHTTPLoads": true,
-              "NSExceptionMinimumTLSVersion": "1.0"
-            },
-            "ngrok-free.app": {
-              "NSExceptionAllowsInsecureHTTPLoads": true,
-              "NSExceptionMinimumTLSVersion": "1.0"
-            }
-          }
-        }
-      }
+      "bundleIdentifier": "com.calledit.app",
+      "buildNumber": "1"
     },
     "android": {
+      "package": "com.calledit.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF"
       },
-      "package": "com.yourcompany.predictionapp",
-      "versionCode": 1,
-      "usesCleartextTraffic": true
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ]
     },
     "web": {
       "bundler": "metro"
     },
     "plugins": [
-      "expo-font"
+      "expo-font",
+      "expo-asset"
     ],
-    "scheme": "prediction-app",
+    "scheme": "calledit",
     "extra": {
-      "tunnel": {
-        "enabled": true
+      "eas": {
+        "projectId": "e3dff17c-f17d-43c1-a179-1356b377a967"
       }
     }
   }
