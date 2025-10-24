@@ -5,14 +5,16 @@ sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
 python-dotenv==1.0.0
 
-# Use bcrypt-binary instead (pre-compiled, no Rust needed)
-bcrypt==4.0.1
+# Password hashing
+bcrypt==4.1.1
 passlib==1.7.4
 
-# Use PyJWT instead of python-jose (no Rust needed)
+# JWT
 pyjwt==2.8.0
 
-pydantic==2.5.0
+# Pydantic v1 (no Rust needed) - OR use v2 with binary wheels
+pydantic==1.10.13
+
 python-multipart==0.0.6
 
 # Optional: For development
